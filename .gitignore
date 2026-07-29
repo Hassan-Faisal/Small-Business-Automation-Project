@@ -25,3 +25,5 @@ storage/
 # IDE
 .vscode/
 .idea/  
+
+desktop.ini
