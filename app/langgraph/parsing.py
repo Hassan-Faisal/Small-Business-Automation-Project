@@ -13,16 +13,13 @@ INTENT_PRECEDENCE = [
     "subscription_status",
     "create_subscription",
     "confirm_order",
-    "update_order",
     "remove_item",
     "add_item",
     "view_cart",
-    "menu",
     "delivery_area",
     "delivery_timing",
     "payment_methods",
     "faq",
-    "human_escalation",
     "greeting",
     "fallback",
 ]
@@ -66,7 +63,6 @@ MENU_VERB_PATTERNS = (
     "show",
     "dikhao",
     "batao",
-    "menu",
     "options",
     "kya hai",
     "kia hai",
@@ -178,6 +174,8 @@ def infer_intent(text: str) -> str:
     normalized = normalize_text(text)
     if not normalized:
         return "fallback"
+    if contains_any(normalized, {"subscription status", "my meal today", "active subscription"}):
+        return "subscription_status"
     if contains_any(normalized, {"track", "status", "where is my order"}):
         return "track_order"
     if contains_any(normalized, {"cancel", "cancel order", "cancel my order"}):
@@ -188,8 +186,6 @@ def infer_intent(text: str) -> str:
         return "pause_subscription"
     if contains_any(normalized, {"resume subscription", "resume my subscription", "restart subscription", "resume"}):
         return "resume_subscription"
-    if contains_any(normalized, {"subscription status", "my meal today", "my subscription", "active subscription"}):
-        return "subscription_status"
     if contains_any(normalized, {"weekly plans", "monthly plans", "subscription plans", "packages", "plans"}):
         return "subscription_plans"
     if contains_any(normalized, {"lunch only", "lunch + dinner", "full day", "weekly full day plan", "weekly full-day plan", "monthly lunch", "weekly subscription", "monthly subscription"}):
@@ -200,6 +196,10 @@ def infer_intent(text: str) -> str:
         return "provide_address"
     if contains_any(normalized, {"change it to", "actually make it", "i only need", "replace", "update quantity", "make it", "only one"}):
         return "update_quantity"
+    if contains_any(normalized, HUMAN_ESCALATION_PATTERNS):
+        return "human_handoff"
+    if contains_any(normalized, {"bulk order", "boxes", "box order", "large order"}):
+        return "bulk_order"
     if contains_any(normalized, {"remove", "delete", "take out"}):
         return "remove_meal"
     if contains_any(normalized, {"add", "order", "buy", "get me", "i want", "need", "mangwa", "bhej", "laga", "rakh", "kar do", "kr do", "chahiye"}):
@@ -222,8 +222,6 @@ def infer_intent(text: str) -> str:
         return "delivery_timing"
     if contains_any(normalized, {"payment methods", "cash on delivery", "bank transfer", "online transfer", "cod"}):
         return "payment_methods"
-    if contains_any(normalized, HUMAN_ESCALATION_PATTERNS):
-        return "human_handoff"
     if contains_any(normalized, {"faq", "policy", "hours", "open", "accept", "delivery", "cash", "card", "timing", "timings"}):
         return "faq"
     if contains_any(normalized, {"hi", "hello", "hey", "good morning", "good afternoon", "good evening", "assalam", "salaam", "salam"}):

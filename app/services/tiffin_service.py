@@ -21,6 +21,13 @@ DELIVERY_WINDOWS = {
 SUPPORTED_PAYMENT_METHODS = {"cash_on_delivery", "online_transfer", "bank_transfer"}
 SUPPORTED_SUBSCRIPTION_STATUSES = {"pending", "active", "paused", "completed", "cancelled"}
 BULK_ORDER_THRESHOLD = 10
+ALLOWED_SUBSCRIPTION_TRANSITIONS = {
+    "pending": {"active", "cancelled"},
+    "active": {"paused", "cancelled"},
+    "paused": {"active", "cancelled"},
+    "completed": set(),
+    "cancelled": set(),
+}
 
 
 @dataclass(slots=True)
@@ -92,6 +99,39 @@ class SubscriptionService:
     def retrieve_subscription_plan(self, plan_id: int) -> SubscriptionPlan | None:
         return self.db.get(SubscriptionPlan, plan_id)
 
+    def get_pending_subscription(self, customer_phone: str) -> CustomerSubscription | None:
+        stmt = select(CustomerSubscription).where(
+            func.lower(func.trim(CustomerSubscription.customer_phone)) == customer_phone.strip().lower(),
+            CustomerSubscription.status == "pending",
+        ).order_by(CustomerSubscription.created_at.desc())
+        return self.db.scalars(stmt).first()
+
+    def update_subscription_status(self, subscription: CustomerSubscription, new_status: str) -> CustomerSubscription:
+        if new_status not in SUPPORTED_SUBSCRIPTION_STATUSES:
+            raise ValueError("Unsupported subscription status.")
+        allowed = ALLOWED_SUBSCRIPTION_TRANSITIONS.get(subscription.status, set())
+        if new_status != subscription.status and new_status not in allowed:
+            raise ValueError(f"Cannot transition subscription from {subscription.status} to {new_status}.")
+        subscription.status = new_status
+        self.db.flush()
+        self.db.commit()
+        return self.db.get(CustomerSubscription, subscription.id) or subscription
+
+    def cancel_customer_subscription(self, customer_phone: str) -> CustomerSubscription | None:
+        subscription = self.get_pending_subscription(customer_phone)
+        if subscription is None:
+            subscription = self.get_active_subscription(customer_phone)
+        if subscription is None:
+            subscription = self.db.scalars(
+                select(CustomerSubscription).where(
+                    func.lower(func.trim(CustomerSubscription.customer_phone)) == customer_phone.strip().lower(),
+                    CustomerSubscription.status == "paused",
+                ).order_by(CustomerSubscription.created_at.desc())
+            ).first()
+        if subscription is None:
+            return None
+        return self.update_subscription_status(subscription, "cancelled")
+
     def create_customer_subscription(
         self,
         *,
@@ -160,10 +200,7 @@ class SubscriptionService:
         subscription = self.get_active_subscription(customer_phone)
         if subscription is None:
             return None
-        subscription.status = "paused"
-        self.db.flush()
-        self.db.commit()
-        return self.db.get(CustomerSubscription, subscription.id)
+        return self.update_subscription_status(subscription, "paused")
 
     def resume_customer_subscription(self, customer_phone: str, on_date: date | None = None) -> CustomerSubscription | None:
         subscription = self.db.scalars(
@@ -175,10 +212,8 @@ class SubscriptionService:
         if subscription is None:
             return None
         current_date = on_date or date.today()
-        subscription.status = "active" if subscription.start_date <= current_date <= subscription.end_date else "pending"
-        self.db.flush()
-        self.db.commit()
-        return self.db.get(CustomerSubscription, subscription.id)
+        target_status = "active" if subscription.start_date <= current_date <= subscription.end_date else "pending"
+        return self.update_subscription_status(subscription, target_status)
 
 class TiffinPolicyService:
     def __init__(self, db: Session):

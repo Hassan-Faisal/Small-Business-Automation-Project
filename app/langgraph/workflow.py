@@ -17,6 +17,7 @@ from app.langgraph.tools import (
     remove_item_from_cart,
 )
 from app.core.logging import setup_logger
+from app.models.customer_subscription import CustomerSubscription
 from app.models.product import Product
 from app.rag.rag_chain import RAGChain
 from app.services.order_service import OrderService
@@ -192,6 +193,55 @@ class OrderConversationWorkflow:
             return options[index]
         return None
 
+    @staticmethod
+    def _canonical_phone(phone: str | None) -> str:
+        return str(phone or "").strip()
+
+    def _get_pending_subscription(
+        self,
+        subscription_service: SubscriptionService,
+        customer_phone: str,
+        *,
+        on_date: date | None = None,
+    ) -> CustomerSubscription | None:
+        current_date = on_date or datetime.now(timezone.utc).date()
+        phone = self._canonical_phone(customer_phone)
+        if not phone:
+            return None
+        stmt = (
+            subscription_service.db.query(CustomerSubscription)
+            .filter(
+                CustomerSubscription.customer_phone.ilike(phone),
+                CustomerSubscription.status == "pending",
+                CustomerSubscription.start_date <= current_date,
+                CustomerSubscription.end_date >= current_date,
+            )
+            .order_by(CustomerSubscription.created_at.desc())
+        )
+        return stmt.first()
+
+    def _activate_subscription(
+        self,
+        subscription_service: SubscriptionService,
+        subscription: CustomerSubscription,
+    ) -> CustomerSubscription:
+        subscription.status = "active"
+        subscription_service.db.flush()
+        subscription_service.db.commit()
+        refreshed = subscription_service.db.get(CustomerSubscription, subscription.id)
+        return refreshed or subscription
+
+    def _cancel_subscription(
+        self,
+        subscription_service: SubscriptionService,
+        subscription: CustomerSubscription,
+    ) -> CustomerSubscription:
+        subscription.status = "cancelled"
+        subscription_service.db.flush()
+        subscription_service.db.commit()
+        refreshed = subscription_service.db.get(CustomerSubscription, subscription.id)
+        return refreshed or subscription
+
     def _route_intent(
         self,
         state: ConversationState,
@@ -213,7 +263,7 @@ class OrderConversationWorkflow:
                 state["pending_menu_option"] = selected_option
 
         state["intent"] = intent
-        state["needs_rag"] = intent == "business_question"
+        state["needs_rag"] = False
 
         return state
 
@@ -540,6 +590,19 @@ class OrderConversationWorkflow:
         )
 
         state["address"] = address
+
+        subscription_service = SubscriptionService(self.order_service.db)
+        customer_phone = str(state.get("customer_phone") or self._load_context(conversation_id).get("customer_phone") or "")
+        pending = self._get_pending_subscription(subscription_service, customer_phone)
+        if pending is not None:
+            pending.delivery_address = address
+            subscription_service.db.commit()
+            subscription_service.db.refresh(pending)
+            state["last_response"] = (
+                "Thanks. Please share your payment method so I can activate your subscription."
+            )
+            return state
+
         state["last_response"] = (
             "Thanks, I have your address."
         )
@@ -1048,12 +1111,6 @@ class OrderConversationWorkflow:
             meal_type = intent.replace("_menu", "")
             return set_response(self._format_daily_menu(self._resolve_menu_day(message), meal_type=meal_type))
 
-        if intent == "meal_price":
-            offering = self._find_meal_by_name(message)
-            if offering is None:
-                return set_response("I could not find that meal in today's menu.")
-            return set_response(f"{offering.name} is Rs. {offering.price}.")
-
         if intent == "subscription_plans":
             plans = subscription_service.list_subscription_plans()
             lines = ["Available plans:"]
@@ -1075,44 +1132,67 @@ class OrderConversationWorkflow:
                         break
             if matched_plan is None:
                 return set_response("Please tell me which subscription plan you want.")
-            pending = getattr(self, "_pending_subscriptions", {})
-            pending[conversation_id] = {
-                "plan_id": matched_plan.id,
-                "plan_name": matched_plan.name,
-                "address": None,
-                "payment_method": None,
-            }
-            self._pending_subscriptions = pending
+
+            customer_phone = str(state.get("customer_phone") or memory_state.get("customer_phone") or "").strip()
+            if not customer_phone:
+                return set_response("Please share your phone number before starting a subscription.")
+
+            pending = self._get_pending_subscription(subscription_service, customer_phone)
+            if pending is None:
+                today = datetime.now(timezone.utc).date()
+                pending = subscription_service.create_customer_subscription(
+                    customer_phone=customer_phone,
+                    subscription_plan_id=matched_plan.id,
+                    start_date=today,
+                    end_date=today + timedelta(days=matched_plan.number_of_days - 1),
+                    delivery_address=None,
+                    preferred_meal_choices=[],
+                    payment_method=None,
+                    status="pending",
+                )
+            else:
+                pending.subscription_plan_id = matched_plan.id
+                pending.start_date = datetime.now(timezone.utc).date()
+                pending.end_date = pending.start_date + timedelta(days=matched_plan.number_of_days - 1)
+                pending.delivery_address = None
+                pending.payment_method = None
+                pending.status = "pending"
+                subscription_service.db.commit()
+                subscription_service.db.refresh(pending)
+
             return set_response(
                 f"{matched_plan.name} costs Rs. {matched_plan.price}. "
                 "Please share your delivery address and preferred payment method to continue."
             )
 
-        if intent == "subscribe":
-            plans = subscription_service.list_subscription_plans()
-            matched_plan = None
-            pending_plan = state.get("pending_subscription_plan")
-            if isinstance(pending_plan, dict) and pending_plan.get("plan_id"):
-                matched_plan = subscription_service.retrieve_subscription_plan(int(pending_plan["plan_id"]))
-            if matched_plan is None:
-                for plan in plans:
-                    if ProductService.normalize_name(plan.name) in ProductService.normalize_name(message):
-                        matched_plan = plan
-                        break
-            if matched_plan is None:
-                return set_response("Please tell me which subscription plan you want.")
-            pending = getattr(self, "_pending_subscriptions", {})
-            pending[conversation_id] = {"plan_id": matched_plan.id, "plan_name": matched_plan.name, "address": None, "payment_method": None}
-            self._pending_subscriptions = pending
-            return set_response(f"{matched_plan.name} costs Rs. {matched_plan.price}. Please share your delivery address and preferred payment method to continue.")
-
         if intent == "subscription_status":
             customer_phone = str(state.get("customer_phone") or memory_state.get("customer_phone") or "")
             context = subscription_service.get_customer_subscription_context(customer_phone)
             if not context.get("has_active_subscription"):
+                pending = self._get_pending_subscription(subscription_service, customer_phone)
+                if pending is not None:
+                    plan = pending.plan or subscription_service.retrieve_subscription_plan(pending.subscription_plan_id)
+                    plan_name = plan.name if plan is not None else "your selected plan"
+                    return set_response(f"You have a pending {plan_name} subscription waiting for confirmation.")
                 return set_response("You do not have an active subscription yet.")
             included = ", ".join(context.get("included_meals_today", [])) or "no meals"
             return set_response(f"Your subscription is {context['status']} from {context['start_date']} to {context['end_date']}. Today's meals: {included}.")
+
+        if intent == "pause_subscription":
+            customer_phone = str(state.get("customer_phone") or memory_state.get("customer_phone") or "")
+            paused = subscription_service.pause_customer_subscription(customer_phone)
+            if paused is None:
+                return set_response("You do not have an active subscription to pause.")
+            return set_response("Your subscription has been paused.")
+
+        if intent == "resume_subscription":
+            customer_phone = str(state.get("customer_phone") or memory_state.get("customer_phone") or "")
+            resumed = subscription_service.resume_customer_subscription(customer_phone)
+            if resumed is None:
+                return set_response("You do not have a paused subscription to resume.")
+            if resumed.status == "pending":
+                return set_response("Your subscription is pending and waiting for confirmation.")
+            return set_response("Your subscription has been resumed.")
 
         if intent == "skip_meal":
             customer_phone = str(state.get("customer_phone") or memory_state.get("customer_phone") or "")
@@ -1138,48 +1218,8 @@ class OrderConversationWorkflow:
         if intent == "payment_methods":
             return set_response("Supported payment methods are cash on delivery, online transfer, and bank transfer.")
 
-        if intent in {"delivery_area", "delivery_timing", "faq"}:
-            response = await self.rag_chain.ask(message)
-            return set_response(self._normalize_response_text(response) or "I could not find that information right now.")
-
         if intent == "human_handoff":
             return set_response("The owner will follow up with you shortly.")
-
-        if intent == "provide_address":
-            address = message.strip()
-            self.memory.save(conversation_id, address=address, customer_phone=state.get("customer_phone"))
-            state["address"] = address
-            pending = getattr(self, "_pending_subscriptions", {}).get(conversation_id) if hasattr(self, "_pending_subscriptions") else None
-            if pending is not None:
-                pending["address"] = address
-                return set_response("Thanks. Please share your payment method so I can activate your subscription.")
-            return set_response("Thanks, I have your address.")
-
-        if intent == "confirm_order":
-            pending = getattr(self, "_pending_subscriptions", {}).get(conversation_id) if hasattr(self, "_pending_subscriptions") else None
-            if pending is not None:
-                customer_phone = str(state.get("customer_phone") or memory_state.get("customer_phone") or "")
-                address = pending.get("address") or str(memory_state.get("address") or "")
-                if not address:
-                    return set_response("Please provide your delivery address before confirming your subscription.")
-                payment_method = pending.get("payment_method") or "cash_on_delivery"
-                plan = subscription_service.retrieve_subscription_plan(int(pending["plan_id"]))
-                if plan is None:
-                    return set_response("I could not find that subscription plan.")
-                today = datetime.now(timezone.utc).date()
-                subscription_service.create_customer_subscription(
-                    customer_phone=customer_phone,
-                    subscription_plan_id=plan.id,
-                    start_date=today,
-                    end_date=today + timedelta(days=plan.number_of_days - 1),
-                    delivery_address=address,
-                    preferred_meal_choices=[],
-                    payment_method=payment_method,
-                    status="active",
-                )
-                self._pending_subscriptions.pop(conversation_id, None)
-                return set_response(f"Your subscription {plan.name} is now active.")
-            return self._confirm_order(state)
 
         if intent == "add_meal":
             return self._add_item(state)
@@ -1203,6 +1243,11 @@ class OrderConversationWorkflow:
             return set_response(f"Updated {target['name']} to {new_quantity}.")
 
         if intent == "cancel_order":
+            customer_phone = str(state.get("customer_phone") or memory_state.get("customer_phone") or "")
+            pending = self._get_pending_subscription(subscription_service, customer_phone)
+            if pending is not None:
+                self._cancel_subscription(subscription_service, pending)
+                return set_response("Your pending subscription has been cancelled.")
             return set_response("Your request has been noted. The owner will follow up about cancellation.")
 
         return state
@@ -1220,11 +1265,6 @@ class OrderConversationWorkflow:
         workflow.add_node(
             "greeting",
             self._greeting,
-        )
-
-        workflow.add_node(
-            "menu",
-            self._show_menu,
         )
 
         workflow.add_node(
@@ -1290,37 +1330,31 @@ class OrderConversationWorkflow:
                 "greeting": "greeting",
                 "today_menu": "tiffin_domain",
                 "weekly_menu": "tiffin_domain",
-                "menu": "tiffin_domain",
                 "breakfast_menu": "tiffin_domain",
                 "lunch_menu": "tiffin_domain",
                 "dinner_menu": "tiffin_domain",
-                "meal_price": "tiffin_domain",
                 "add_item": "add_item",
                 "add_meal": "add_item",
                 "remove_item": "remove_item",
                 "remove_meal": "remove_item",
-                "update_order": "tiffin_domain",
                 "update_quantity": "tiffin_domain",
                 "view_cart": "view_cart",
-                "delivery_area": "tiffin_domain",
-                "delivery_timing": "tiffin_domain",
+                "delivery_area": "rag",
+                "delivery_timing": "rag",
                 "create_subscription": "tiffin_domain",
                 "subscription_plans": "tiffin_domain",
-                "subscribe": "tiffin_domain",
-                "subscribe": "tiffin_domain",
                 "subscription_status": "tiffin_domain",
+                "pause_subscription": "tiffin_domain",
+                "resume_subscription": "tiffin_domain",
                 "skip_meal": "tiffin_domain",
                 "bulk_order": "tiffin_domain",
                 "payment_methods": "tiffin_domain",
-                "provide_address": "tiffin_domain",
+                "provide_address": "address",
                 "confirm_order": "confirm_order",
                 "track_order": "track_order",
                 "cancel_order": "tiffin_domain",
-                "faq": "tiffin_domain",
-                "human_escalation": "tiffin_domain",
+                "faq": "rag",
                 "human_handoff": "tiffin_domain",
-                "human_handoff": "tiffin_domain",
-                "business_question": "rag",
                 "fallback": "fallback",
             },
         )
@@ -1328,7 +1362,6 @@ class OrderConversationWorkflow:
         terminal_nodes = [
             "greeting",
             "tiffin_domain",
-            "menu",
             "add_item",
             "remove_item",
             "view_cart",

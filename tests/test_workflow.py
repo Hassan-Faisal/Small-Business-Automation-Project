@@ -115,7 +115,7 @@ def test_menu_option_selection_and_subscription_plan_journey(workflow, seeded_pr
             message_id='journey-menu',
         )
     )
-    assert menu['intent'] in {'weekly_menu', 'today_menu', 'menu'}
+    assert menu['intent'] in {'weekly_menu', 'today_menu'}
     assert 'anda paratha' in menu['response'].lower()
 
     add_item = asyncio.run(
@@ -149,4 +149,51 @@ def test_menu_option_selection_and_subscription_plan_journey(workflow, seeded_pr
         )
     )
     assert 'delivery address' in subscription['response'].lower()
-    assert subscription['intent'] in {'create_subscription', 'subscribe'}
+    assert subscription['intent'] == 'create_subscription'
+
+
+def test_canonical_parser_intents_have_one_workflow_path(workflow, customer_phone, fake_rag_chain) -> None:
+    samples = {
+        'greeting': 'Hello',
+        'today_menu': "What is today's menu?",
+        'weekly_menu': 'Weekly menu',
+        'breakfast_menu': 'Breakfast menu',
+        'lunch_menu': 'Lunch menu',
+        'dinner_menu': 'Dinner menu',
+        'add_meal': 'Add 1 Burger',
+        'remove_meal': 'Remove Burger',
+        'view_cart': 'View cart',
+        'delivery_area': 'Where do you deliver?',
+        'delivery_timing': 'What time do you deliver?',
+        'payment_methods': 'Payment methods',
+        'faq': 'What are your hours?',
+        'human_handoff': 'I want to talk to a human',
+        'fallback': 'Unrelated topic',
+        'pause_subscription': 'Pause my subscription',
+        'resume_subscription': 'Resume my subscription',
+        'subscription_plans': 'Subscription plans',
+        'subscription_status': 'What is my subscription status?',
+        'skip_meal': 'Skip tomorrow breakfast',
+        'bulk_order': 'Need 10 boxes tomorrow',
+        'provide_address': 'I live at 12 Canal Road',
+        'confirm_order': 'Confirm my order',
+        'track_order': 'Track order ORD-1234',
+        'cancel_order': 'Cancel my subscription',
+        'create_subscription': 'Weekly Full-Day Plan',
+    }
+
+    seen: set[str] = set()
+    for index, (expected_intent, message) in enumerate(samples.items(), start=1):
+        result = asyncio.run(
+            workflow.run(
+                message,
+                conversation_id=f'canonical-{index}',
+                customer_phone=customer_phone,
+                message_id=f'canonical-msg-{index}',
+            )
+        )
+        assert result['intent'] == expected_intent
+        assert isinstance(result['response'], str) and result['response'].strip()
+        seen.add(result['intent'])
+
+    assert seen == set(samples.keys())
