@@ -1,41 +1,23 @@
-# ABC Electronics
+# TiffinAI Company Information
 
-## About Us
+TiffinAI is a WhatsApp-first meal ordering assistant for a home kitchen and tiffin service.
 
-ABC Electronics is a fictional electronics retailer created for demonstration purposes. We specialize in smartphones, laptops, accessories, and consumer electronics. Our goal is to provide high-quality products with reliable customer support and fast nationwide delivery.
+## Purpose
 
-## Business Hours
+We help customers:
+- view the menu
+- place meal orders
+- manage subscriptions
+- check delivery and policy information
+- contact support when needed
 
-Monday to Saturday: 10:00 AM – 8:00 PM
+## Contact
 
-Sunday: Closed
+- WhatsApp: +92-300-1234567
+- Support hours: see `02_operating_hours.md`
 
-## Contact Information
+## Service Principles
 
-Phone: +92-300-1234567
-
-WhatsApp: +92-300-1234567
-
-Email: support@abcelectronics.com
-
-## Store Address
-
-123 Main Boulevard, Lahore, Pakistan
-
-## Payment Methods
-
-We accept:
-
-- Cash on Delivery (selected cities)
-- Bank Transfer
-- Debit/Credit Cards
-- JazzCash
-- EasyPaisa
-
-## Delivery Coverage
-
-We deliver across Pakistan through trusted courier partners.
-
-## Customer Support
-
-Customers can contact us through WhatsApp, phone, or email for product inquiries, order tracking, warranty claims, and technical support.
+- Menu, prices, availability, and live order details come from the database.
+- Policies, FAQs, delivery guidance, and support guidance come from the knowledge base.
+- If a question needs live data, the assistant should guide the customer to the ordering workflow or account-specific services.
