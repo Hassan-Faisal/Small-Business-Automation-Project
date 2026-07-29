@@ -1,0 +1,27 @@
+# Environment
+.env
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Temporary test artifacts
+.tmp/
+graph-test-*/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Local vector stores
+chroma_db/
+
+# Runtime storage
+storage/
+
+# IDE
+.vscode/
+.idea/  

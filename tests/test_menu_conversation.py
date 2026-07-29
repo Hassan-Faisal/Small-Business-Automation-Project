@@ -1,0 +1,124 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+import asyncio
+
+
+def _today_day_name() -> str:
+    return datetime.now(timezone.utc).strftime('%A')
+
+
+def test_today_menu_uses_database_items(workflow, seeded_tiffin_catalog) -> None:
+    result = asyncio.run(
+        workflow.run(
+            "What is today's menu?",
+            conversation_id='menu-today',
+            customer_phone='15551234567',
+            message_id='menu-today-1',
+        )
+    )
+
+    today = _today_day_name()
+    day_menu = seeded_tiffin_catalog.list_daily_menu(today)
+
+    assert result['intent'] == 'today_menu'
+    assert today.lower() in result['response'].lower()
+    assert day_menu['breakfast']
+    assert day_menu['lunch']
+    assert day_menu['dinner']
+    assert day_menu['breakfast'][0].name.lower() in result['response'].lower()
+
+
+def test_weekly_menu_shows_monday_to_sunday(workflow, seeded_tiffin_catalog) -> None:
+    result = asyncio.run(
+        workflow.run(
+            'Weekly menu',
+            conversation_id='menu-weekly',
+            customer_phone='15551234567',
+            message_id='menu-weekly-1',
+        )
+    )
+
+    weekly_menu = seeded_tiffin_catalog.list_weekly_menu()
+
+    assert result['intent'] == 'weekly_menu'
+    response = result['response'].lower()
+    assert response.index('monday') < response.index('sunday')
+    for day in weekly_menu:
+        assert day.lower() in response
+
+
+def test_breakfast_menu_mentions_breakfast_items(workflow, seeded_tiffin_catalog) -> None:
+    result = asyncio.run(
+        workflow.run(
+            'Breakfast menu',
+            conversation_id='menu-breakfast',
+            customer_phone='15551234567',
+            message_id='menu-breakfast-1',
+        )
+    )
+
+    today = _today_day_name()
+    breakfast_items = seeded_tiffin_catalog.list_daily_menu(today)['breakfast']
+
+    assert result['intent'] == 'breakfast_menu'
+    assert 'breakfast' in result['response'].lower()
+    assert breakfast_items[0].name.lower() in result['response'].lower()
+    assert 'lunch:' not in result['response'].lower()
+
+
+def test_lunch_menu_mentions_lunch_items(workflow, seeded_tiffin_catalog) -> None:
+    result = asyncio.run(
+        workflow.run(
+            'Lunch',
+            conversation_id='menu-lunch',
+            customer_phone='15551234567',
+            message_id='menu-lunch-1',
+        )
+    )
+
+    today = _today_day_name()
+    lunch_items = seeded_tiffin_catalog.list_daily_menu(today)['lunch']
+
+    assert result['intent'] == 'lunch_menu'
+    assert 'lunch' in result['response'].lower()
+    assert lunch_items[0].name.lower() in result['response'].lower()
+    assert 'breakfast:' not in result['response'].lower()
+
+
+def test_dinner_menu_mentions_dinner_items(workflow, seeded_tiffin_catalog) -> None:
+    result = asyncio.run(
+        workflow.run(
+            'Dinner',
+            conversation_id='menu-dinner',
+            customer_phone='15551234567',
+            message_id='menu-dinner-1',
+        )
+    )
+
+    today = _today_day_name()
+    dinner_items = seeded_tiffin_catalog.list_daily_menu(today)['dinner']
+
+    assert result['intent'] == 'dinner_menu'
+    assert 'dinner' in result['response'].lower()
+    assert dinner_items[0].name.lower() in result['response'].lower()
+    assert 'breakfast:' not in result['response'].lower()
+
+
+def test_roman_urdu_menu_phrases_are_supported(workflow, seeded_tiffin_catalog) -> None:
+    result = asyncio.run(
+        workflow.run(
+            'Aaj breakfast mein kya hai?',
+            conversation_id='menu-roman-urdu',
+            customer_phone='15551234567',
+            message_id='menu-roman-urdu-1',
+        )
+    )
+
+    today = _today_day_name()
+    breakfast_items = seeded_tiffin_catalog.list_daily_menu(today)['breakfast']
+
+    assert result['intent'] == 'breakfast_menu'
+    assert breakfast_items[0].name.lower() in result['response'].lower()
+
