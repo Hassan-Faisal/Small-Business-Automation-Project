@@ -23,8 +23,8 @@ def upgrade() -> None:
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("price", sa.Numeric(precision=10, scale=2), nullable=False),
         sa.Column("day_of_week", sa.String(length=20), nullable=False),
-        sa.Column("availability", sa.Boolean(), server_default=sa.text("1"), nullable=False),
-        sa.Column("is_active", sa.Boolean(), server_default=sa.text("1"), nullable=False),
+        sa.Column("availability", sa.Boolean(), server_default=sa.text("true"), nullable=False),
+        sa.Column("is_active", sa.Boolean(), server_default=sa.text("true"), nullable=False),
         sa.UniqueConstraint("day_of_week", "meal_type", "name", name="uq_meal_offerings_day_type_name"),
     )
     op.create_index(op.f("ix_meal_offerings_id"), "meal_offerings", ["id"], unique=False)
@@ -41,7 +41,7 @@ def upgrade() -> None:
         sa.Column("included_meal_types", sa.JSON(), nullable=False),
         sa.Column("price", sa.Numeric(precision=10, scale=2), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("is_active", sa.Boolean(), server_default=sa.text("1"), nullable=False),
+        sa.Column("is_active", sa.Boolean(), server_default=sa.text("true"), nullable=False),
     )
     op.create_index(op.f("ix_subscription_plans_id"), "subscription_plans", ["id"], unique=False)
     op.create_index(op.f("ix_subscription_plans_name"), "subscription_plans", ["name"], unique=True)
@@ -87,7 +87,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_meal_skips_status"), "meal_skips", ["status"], unique=False)
 
     op.add_column("orders", sa.Column("payment_method", sa.String(length=30), nullable=True))
-    op.add_column("orders", sa.Column("is_bulk_order", sa.Boolean(), server_default=sa.text("0"), nullable=False))
+    op.add_column("orders", sa.Column("is_bulk_order", sa.Boolean(), server_default=sa.text("false"), nullable=False))
     op.add_column("orders", sa.Column("requested_delivery_at", sa.DateTime(timezone=True), nullable=True))
     op.add_column("orders", sa.Column("number_of_boxes", sa.Integer(), nullable=True))
     op.add_column("orders", sa.Column("special_instructions", sa.Text(), nullable=True))
@@ -125,3 +125,4 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_meal_offerings_name"), table_name="meal_offerings")
     op.drop_index(op.f("ix_meal_offerings_id"), table_name="meal_offerings")
     op.drop_table("meal_offerings")
+

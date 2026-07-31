@@ -21,7 +21,7 @@ def upgrade() -> None:
         sa.Column("name", sa.String(length=150), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("price", sa.Numeric(precision=10, scale=2), nullable=False),
-        sa.Column("is_available", sa.Boolean(), server_default=sa.text("1"), nullable=False),
+        sa.Column("is_available", sa.Boolean(), server_default=sa.text("true"), nullable=False),
     )
     op.create_index(op.f("ix_products_id"), "products", ["id"], unique=False)
     op.create_index(op.f("ix_products_name"), "products", ["name"], unique=True)
@@ -73,3 +73,5 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_products_name"), table_name="products")
     op.drop_index(op.f("ix_products_id"), table_name="products")
     op.drop_table("products")
+
+
