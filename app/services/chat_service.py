@@ -1,9 +1,17 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from contextlib import closing
+
+from sqlalchemy.orm import Session
+
 from app.core.database import SessionLocal
+from app.langgraph.memory import ConversationMemory
 from app.langgraph.workflow import OrderConversationWorkflow
-from app.services.tiffin_service import TiffinCatalogService
 from app.rag.rag_chain import RAGChain
 from app.services.order_service import OrderService
 from app.services.product_service import ProductService
+from app.services.tiffin_service import TiffinCatalogService
 
 
 class ChatService:
@@ -15,31 +23,25 @@ class ChatService:
         product_service: ProductService | None = None,
         order_service: OrderService | None = None,
         meal_service: TiffinCatalogService | None = None,
+        session_factory: Callable[[], Session] | None = None,
     ):
         self.rag_chain = rag_chain
+        self._session_factory = session_factory or SessionLocal
         self.product_service = product_service
         self.order_service = order_service
         self.meal_service = meal_service
+        self.workflow: OrderConversationWorkflow | None = None
 
-        if product_service is None or order_service is None or meal_service is None:
-            db_session = None
-            if product_service is not None:
-                db_session = product_service.db
-            elif order_service is not None:
-                db_session = order_service.db
-            else:
-                db_session = SessionLocal()
-
-            self.product_service = product_service or ProductService(db_session)
-            self.order_service = order_service or OrderService(db_session)
-            self.meal_service = meal_service or TiffinCatalogService(db_session)
-
-        self.workflow = OrderConversationWorkflow(
-            rag_chain=rag_chain,
-            product_service=self.product_service,
-            order_service=self.order_service,
-            meal_service=self.meal_service,
-        )
+        if product_service is not None and order_service is not None and meal_service is not None:
+            memory_session = getattr(product_service, "db", None)
+            memory = ConversationMemory(memory_session) if isinstance(memory_session, Session) else None
+            self.workflow = OrderConversationWorkflow(
+                rag_chain=rag_chain,
+                product_service=product_service,
+                order_service=order_service,
+                meal_service=meal_service,
+                memory=memory,
+            )
 
     async def chat(
         self,
@@ -50,10 +52,27 @@ class ChatService:
     ) -> str:
         """Process a user's message and return an AI response."""
 
-        result = await self.workflow.run(
-            message,
-            conversation_id=conversation_id,
-            customer_phone=customer_phone,
-            message_id=message_id,
-        )
-        return result["response"]
+        if self.workflow is not None:
+            result = await self.workflow.run(
+                message,
+                conversation_id=conversation_id,
+                customer_phone=customer_phone,
+                message_id=message_id,
+            )
+            return result["response"]
+
+        with closing(self._session_factory()) as db_session:
+            workflow = OrderConversationWorkflow(
+                rag_chain=self.rag_chain,
+                product_service=ProductService(db_session),
+                order_service=OrderService(db_session),
+                meal_service=TiffinCatalogService(db_session),
+                memory=ConversationMemory(db_session),
+            )
+            result = await workflow.run(
+                message,
+                conversation_id=conversation_id,
+                customer_phone=customer_phone,
+                message_id=message_id,
+            )
+            return result["response"]

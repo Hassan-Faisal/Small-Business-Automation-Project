@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import logging
+import asyncio
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -84,41 +84,77 @@ def test_unhandled_exception_uses_safe_format(app):
     }
 
 
-def test_lifespan_does_not_create_schema_or_seed(monkeypatch):
+def test_lifespan_bootstraps_database_and_seed(monkeypatch):
     from fastapi import FastAPI
 
-    import app.core.database as database_module
     import app.core.lifespan as lifespan_module
 
-    called = {"create_all": False}
+    called: dict[str, object] = {}
 
-    def fail_create_all(*args, **kwargs):
-        called["create_all"] = True
-        raise AssertionError("create_all should not be called during startup")
+    class DummySession:
+        def close(self) -> None:
+            called['session_closed'] = True
 
     class DummyKnowledgeManager:
         def initialize(self) -> None:
-            return None
+            called['knowledge_initialized'] = True
 
     class DummyRAGChain:
         def __init__(self, *args, **kwargs) -> None:
-            return None
+            called['rag_initialized'] = True
 
     class DummyChatService:
         def __init__(self, *args, **kwargs) -> None:
-            return None
+            called['chat_initialized'] = True
 
-    monkeypatch.setattr(database_module.Base.metadata, "create_all", fail_create_all)
-    monkeypatch.setattr(lifespan_module, "KnowledgeManager", DummyKnowledgeManager)
-    monkeypatch.setattr(lifespan_module, "RAGChain", DummyRAGChain)
-    monkeypatch.setattr(lifespan_module, "ChatService", DummyChatService)
-    monkeypatch.setattr(lifespan_module, "_get_twilio_request_validator", lambda: None)
+    def fake_session_factory() -> DummySession:
+        called['session_factory_used'] = True
+        return DummySession()
+
+    monkeypatch.setattr(settings, 'OPENAI_API_KEY', 'test-openai-key', raising=False)
+    monkeypatch.setattr(settings, 'TWILIO_AUTH_TOKEN', 'test-twilio-token', raising=False)
+    monkeypatch.setattr(settings, 'TWILIO_SIGNATURE_VERIFICATION_ENABLED', True, raising=False)
+    monkeypatch.setattr(lifespan_module, 'initialize_database', lambda: called.__setitem__('database_initialized', True))
+    monkeypatch.setattr(lifespan_module, 'build_session_factory', lambda: fake_session_factory)
+    monkeypatch.setattr(lifespan_module, 'seed_tiffin_catalog', lambda session: called.__setitem__('seed_session', session))
+    monkeypatch.setattr(lifespan_module, 'KnowledgeManager', DummyKnowledgeManager)
+    monkeypatch.setattr(lifespan_module, 'RAGChain', DummyRAGChain)
+    monkeypatch.setattr(lifespan_module, 'ChatService', DummyChatService)
+    monkeypatch.setattr(lifespan_module, '_get_twilio_request_validator', lambda: None)
+
+    async def run_lifespan() -> None:
+        app = FastAPI()
+        async with lifespan_module.lifespan(app):
+            assert app.state.db_session_factory is fake_session_factory
+
+    asyncio.run(run_lifespan())
+
+    assert called['database_initialized'] is True
+    assert called['session_factory_used'] is True
+    assert called['session_closed'] is True
+    assert called['seed_session'].__class__ is DummySession
+    assert called['knowledge_initialized'] is True
+    assert called['rag_initialized'] is True
+    assert called['chat_initialized'] is True
+
+
+def test_lifespan_requires_openai_api_key(monkeypatch):
+    from fastapi import FastAPI
+
+    import app.core.lifespan as lifespan_module
+
+    monkeypatch.setattr(settings, 'DATABASE_URL', 'sqlite:///./test.db', raising=False)
+    monkeypatch.setattr(settings, 'OPENAI_API_KEY', '', raising=False)
+    monkeypatch.setattr(settings, 'TWILIO_AUTH_TOKEN', 'test-twilio-token', raising=False)
+    monkeypatch.setattr(settings, 'TWILIO_SIGNATURE_VERIFICATION_ENABLED', True, raising=False)
 
     async def run_lifespan() -> None:
         async with lifespan_module.lifespan(FastAPI()):
             return None
 
-    import asyncio
-
-    asyncio.run(run_lifespan())
-    assert called == {"create_all": False}
+    try:
+        asyncio.run(run_lifespan())
+    except RuntimeError as exc:
+        assert str(exc) == 'Missing required setting: OPENAI_API_KEY'
+    else:
+        raise AssertionError('Expected startup to fail when OPENAI_API_KEY is missing.')

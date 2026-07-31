@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.meal_offering import MealOffering
+from app.models.product import Product
 from app.models.subscription_plan import SubscriptionPlan
 
 WEEKLY_TIFFIN_MENU: dict[str, dict[str, list[dict[str, object]]]] = {
@@ -152,6 +153,14 @@ def _insert_meal_if_missing(db: Session, *, day_of_week: str, meal_type: str, na
         db.add(MealOffering(day_of_week=day_of_week, meal_type=meal_type, name=name, description=description, price=price, availability=True, is_active=True))
 
 
+def _insert_product_if_missing(db: Session, *, name: str, description: str, price: Decimal) -> None:
+    stmt = select(Product).where(Product.name == name)
+    product = db.scalars(stmt).first()
+    if product is None:
+        db.add(Product(name=name, description=description, price=price, is_available=True))
+        db.flush()
+
+
 def _insert_plan_if_missing(db: Session, *, name: str, duration_type: str, number_of_days: int, included_meal_types: list[str], price: Decimal, description: str) -> None:
     stmt = select(SubscriptionPlan).where(SubscriptionPlan.name == name)
     plan = db.scalars(stmt).first()
@@ -163,7 +172,11 @@ def seed_tiffin_catalog(db: Session) -> None:
     for day_of_week, meals in WEEKLY_TIFFIN_MENU.items():
         for meal_type, offerings in meals.items():
             for offering in offerings:
-                _insert_meal_if_missing(db, day_of_week=day_of_week, meal_type=meal_type, name=str(offering["name"]), description=str(offering["description"]), price=Decimal(str(offering["price"])))
+                name = str(offering["name"])
+                description = str(offering["description"])
+                price = Decimal(str(offering["price"]))
+                _insert_meal_if_missing(db, day_of_week=day_of_week, meal_type=meal_type, name=name, description=description, price=price)
+                _insert_product_if_missing(db, name=name, description=description, price=price)
 
     for plan in SUBSCRIPTION_PLANS:
         _insert_plan_if_missing(

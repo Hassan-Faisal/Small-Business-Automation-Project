@@ -30,20 +30,28 @@ def _get_webhook_service(request: Request) -> WhatsAppWebhookService:
     return webhook_service
 
 
-def _trusted_request_url(request: Request) -> str:
-    # Twilio signs the externally visible URL. We intentionally avoid trusting forwarded
-    # headers unless the deployment has already normalized them, because proxy headers can
-    # be spoofed in direct requests. If a reverse proxy or tunnel rewrites the public URL,
-    # configure the app/proxy so request.url reflects that canonical address.
-    if getattr(settings, "TWILIO_TRUST_FORWARDED_HEADERS", False):
-        forwarded_proto = request.headers.get("x-forwarded-proto")
-        forwarded_host = request.headers.get("x-forwarded-host")
-        if forwarded_proto or forwarded_host:
-            parts = urlsplit(str(request.url))
-            scheme = forwarded_proto or parts.scheme
-            netloc = forwarded_host or parts.netloc
-            return urlunsplit((scheme, netloc, parts.path, parts.query, parts.fragment))
-    return str(request.url)
+def _forwarded_request_url(request: Request) -> str | None:
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    forwarded_host = request.headers.get("x-forwarded-host")
+    if not forwarded_proto and not forwarded_host:
+        return None
+
+    parts = urlsplit(str(request.url))
+    scheme = forwarded_proto or parts.scheme
+    netloc = forwarded_host or parts.netloc
+    return urlunsplit((scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def _trusted_request_urls(request: Request) -> list[str]:
+    direct_url = str(request.url)
+    if not getattr(settings, "TWILIO_TRUST_FORWARDED_HEADERS", False):
+        return [direct_url]
+
+    urls = [direct_url]
+    forwarded_url = _forwarded_request_url(request)
+    if forwarded_url and forwarded_url not in urls:
+        urls.insert(0, forwarded_url)
+    return urls
 
 
 def _get_twilio_request_validator() -> Any:
@@ -70,7 +78,10 @@ def _validate_twilio_signature(request: Request, form_payload: dict[str, str]) -
 
     request_validator = _get_twilio_request_validator()
     validator = request_validator(auth_token)
-    return bool(validator.validate(_trusted_request_url(request), form_payload, signature))
+    return any(
+        bool(validator.validate(candidate_url, form_payload, signature))
+        for candidate_url in _trusted_request_urls(request)
+    )
 
 
 def _empty_twiml() -> Response:

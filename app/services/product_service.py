@@ -5,6 +5,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.models.meal_offering import MealOffering
 from app.models.product import Product
 
 
@@ -29,6 +30,22 @@ class ProductService:
             func.lower(func.trim(Product.name)) == normalized,
         )
         return self.db.scalars(stmt).first()
+
+    def get_or_create_product_for_meal(self, meal: MealOffering) -> Product:
+        existing = self.retrieve_product_by_normalized_name(meal.name)
+        if existing is not None:
+            return existing
+
+        product = Product(
+            name=meal.name.strip(),
+            description=meal.description,
+            price=Decimal(str(meal.price)),
+            is_available=bool(meal.availability and meal.is_active),
+        )
+        self.db.add(product)
+        self.db.commit()
+        self.db.refresh(product)
+        return product
 
     def create_product(
         self,

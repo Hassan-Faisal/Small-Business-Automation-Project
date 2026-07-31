@@ -99,6 +99,12 @@ class SubscriptionService:
     def retrieve_subscription_plan(self, plan_id: int) -> SubscriptionPlan | None:
         return self.db.get(SubscriptionPlan, plan_id)
 
+    def get_latest_subscription(self, customer_phone: str) -> CustomerSubscription | None:
+        stmt = select(CustomerSubscription).where(
+            func.lower(func.trim(CustomerSubscription.customer_phone)) == customer_phone.strip().lower(),
+        ).order_by(CustomerSubscription.created_at.desc(), CustomerSubscription.id.desc())
+        return self.db.scalars(stmt).first()
+
     def get_pending_subscription(self, customer_phone: str) -> CustomerSubscription | None:
         stmt = select(CustomerSubscription).where(
             func.lower(func.trim(CustomerSubscription.customer_phone)) == customer_phone.strip().lower(),
@@ -195,7 +201,6 @@ class SubscriptionService:
             return []
         return [str(meal_type) for meal_type in plan.included_meal_types if str(meal_type) in {"breakfast", "lunch", "dinner"}]
 
-
     def pause_customer_subscription(self, customer_phone: str) -> CustomerSubscription | None:
         subscription = self.get_active_subscription(customer_phone)
         if subscription is None:
@@ -214,6 +219,7 @@ class SubscriptionService:
         current_date = on_date or date.today()
         target_status = "active" if subscription.start_date <= current_date <= subscription.end_date else "pending"
         return self.update_subscription_status(subscription, target_status)
+
 
 class TiffinPolicyService:
     def __init__(self, db: Session):

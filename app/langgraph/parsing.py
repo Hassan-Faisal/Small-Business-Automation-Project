@@ -4,98 +4,11 @@ import re
 from datetime import date, timedelta
 from typing import Iterable
 
-INTENT_PRECEDENCE = [
-    "track_order",
-    "cancel_order",
-    "skip_meal",
-    "pause_subscription",
-    "resume_subscription",
-    "subscription_status",
-    "create_subscription",
-    "confirm_order",
-    "remove_item",
-    "add_item",
-    "view_cart",
-    "delivery_area",
-    "delivery_timing",
-    "payment_methods",
-    "faq",
-    "greeting",
-    "fallback",
-]
-
-WEEKDAY_ALIASES = {
-    "monday": {"monday", "mon", "peer", "pir", "somwar"},
-    "tuesday": {"tuesday", "tue", "mangal", "mangalwar"},
-    "wednesday": {"wednesday", "wed", "budh", "budhwar"},
-    "thursday": {"thursday", "thu", "jumeraat", "jumerat"},
-    "friday": {"friday", "fri", "jumma", "juma"},
-    "saturday": {"saturday", "sat", "hafta"},
-    "sunday": {"sunday", "sun", "itwar", "aitwar"},
-}
-
-RELATIVE_DAY_ALIASES = {
-    "today": {"today", "aaj", "aj"},
-    "tomorrow": {"tomorrow", "kal"},
-    "day_after_tomorrow": {"day after tomorrow", "parson"},
-}
-
-MEAL_ALIASES = {
-    "breakfast": {"breakfast", "nashta", "nashtay", "nashtay", "nashtay mein", "nashtay me"},
-    "lunch": {"lunch", "dopahar", "dopehar"},
-    "dinner": {"dinner", "raat ka khana", "rat ka khana", "raat ka khanay"},
-}
-
-ORDER_VERB_PATTERNS = (
-    " order ",
-    "add",
-    "buy",
-    "chahiye",
-    "mangwa do",
-    "mangwa dena",
-    "bhej do",
-    "laga do",
-    "kar do",
-    "kr do",
-    "rakh do",
-)
-MENU_VERB_PATTERNS = (
-    "show",
-    "dikhao",
-    "batao",
-    "options",
-    "kya hai",
-    "kia hai",
-)
-
-HUMAN_ESCALATION_PATTERNS = (
-    "refund",
-    "wrong delivery",
-    "missing delivery",
-    "complaint",
-    "damaged food",
-    "custom pricing",
-    "talk to owner",
-    "talk to human",
-    "agent",
-    "human",
-    "owner",
-    "representative",
-)
-
-NUMBER_WORDS = {
-    "zero": 0,
-    "one": 1,
-    "two": 2,
-    "three": 3,
-    "four": 4,
-    "five": 5,
-    "six": 6,
-    "seven": 7,
-    "eight": 8,
-    "nine": 9,
-    "ten": 10,
-}
+CANONICAL_INTENTS = ["greeting", "today_menu", "weekly_menu", "breakfast_menu", "lunch_menu", "dinner_menu", "add_item", "remove_item", "view_cart", "provide_address", "confirm_order", "track_order", "cancel_order", "subscription_plans", "create_subscription", "subscription_status", "pause_subscription", "resume_subscription", "cancel_subscription", "skip_meal", "bulk_order", "delivery_area", "delivery_timing", "payment_methods", "faq", "human_handoff", "fallback"]
+WEEKDAY_ALIASES = {"monday": {"monday", "mon", "peer", "pir", "somwar"}, "tuesday": {"tuesday", "tue", "mangal", "mangalwar"}, "wednesday": {"wednesday", "wed", "budh", "budhwar"}, "thursday": {"thursday", "thu", "jumeraat", "jumerat"}, "friday": {"friday", "fri", "jumma", "juma"}, "saturday": {"saturday", "sat", "hafta"}, "sunday": {"sunday", "sun", "itwar", "aitwar"}}
+RELATIVE_DAY_ALIASES = {"today": {"today", "aaj", "aj"}, "tomorrow": {"tomorrow", "kal"}, "day_after_tomorrow": {"day after tomorrow", "parson"}}
+MEAL_ALIASES = {"breakfast": {"breakfast", "nashta", "nashtay", "subah ka khana"}, "lunch": {"lunch", "dopahar", "dopehar"}, "dinner": {"dinner", "raat ka khana", "rat ka khana", "shaam ka khana"}}
+NUMBER_WORDS = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
 POSITION_WORDS = {"first": 1, "second": 2, "third": 3, "last": -1}
 
 
@@ -103,16 +16,19 @@ def normalize_text(text: str) -> str:
     return " ".join(text.strip().lower().split())
 
 
+def _phrase_in_text(text: str, phrase: str) -> bool:
+    return re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text) is not None
+
+
 def contains_any(text: str, patterns: Iterable[str]) -> bool:
-    return any(pattern in text for pattern in patterns)
+    return any(_phrase_in_text(text, pattern) for pattern in patterns)
 
 
 def extract_explicit_weekday(text: str) -> str | None:
     normalized = normalize_text(text)
     for canonical_day, aliases in WEEKDAY_ALIASES.items():
-        for alias in aliases:
-            if re.search(rf"\b{re.escape(alias)}\b", normalized):
-                return canonical_day.title()
+        if contains_any(normalized, aliases):
+            return canonical_day.title()
     return None
 
 
@@ -129,10 +45,7 @@ def extract_relative_day(text: str, *, base_date: date | None = None) -> str | N
 
 
 def extract_day(text: str, *, base_date: date | None = None) -> str | None:
-    explicit = extract_explicit_weekday(text)
-    if explicit is not None:
-        return explicit
-    return extract_relative_day(text, base_date=base_date)
+    return extract_explicit_weekday(text) or extract_relative_day(text, base_date=base_date)
 
 
 def extract_meal_type(text: str) -> str | None:
@@ -149,24 +62,22 @@ def extract_quantity(text: str) -> int | None:
     if match is not None:
         return int(match.group(1))
     for word, value in NUMBER_WORDS.items():
-        if re.search(rf"\b{word}\b", normalized):
+        if _phrase_in_text(normalized, word):
             return value
-    if contains_any(normalized, {"only one", "just one", "ek hi", "sirf ek"}):
-        return 1
     return None
 
 
 def extract_position_reference(text: str) -> int | None:
     normalized = normalize_text(text)
     for word, value in POSITION_WORDS.items():
-        if re.search(rf"\b{word}\b", normalized):
+        if _phrase_in_text(normalized, word):
             return value
-    return None
+    match = re.search(r"\bitem\s+(\d+)\b", normalized)
+    return int(match.group(1)) if match else None
 
 
 def extract_order_reference(text: str) -> str | None:
-    normalized = text.upper()
-    match = re.search(r"\bORD-[A-Z0-9]+(?:-[A-Z0-9]+)*\b", normalized)
+    match = re.search(r"\bORD-[A-Z0-9]+(?:-[A-Z0-9]+)*\b", text.upper())
     return match.group(0) if match else None
 
 
@@ -174,56 +85,61 @@ def infer_intent(text: str) -> str:
     normalized = normalize_text(text)
     if not normalized:
         return "fallback"
-    if contains_any(normalized, {"subscription status", "my meal today", "active subscription"}):
-        return "subscription_status"
-    if contains_any(normalized, {"track", "status", "where is my order"}):
-        return "track_order"
-    if contains_any(normalized, {"cancel", "cancel order", "cancel my order"}):
-        return "cancel_order"
-    if contains_any(normalized, {"skip", "miss my meal", "meal skip"}):
-        return "skip_meal"
-    if contains_any(normalized, {"pause subscription", "pause my subscription", "pause"}):
-        return "pause_subscription"
-    if contains_any(normalized, {"resume subscription", "resume my subscription", "restart subscription", "resume"}):
-        return "resume_subscription"
-    if contains_any(normalized, {"weekly plans", "monthly plans", "subscription plans", "packages", "plans"}):
-        return "subscription_plans"
-    if contains_any(normalized, {"lunch only", "lunch + dinner", "full day", "weekly full day plan", "weekly full-day plan", "monthly lunch", "weekly subscription", "monthly subscription"}):
-        return "create_subscription"
-    if contains_any(normalized, {"confirm", "place", "submit"}):
-        return "confirm_order"
-    if contains_any(normalized, {"address", "location", "deliver to", "live at", "my address", "send to", "located at"}):
-        return "provide_address"
-    if contains_any(normalized, {"change it to", "actually make it", "i only need", "replace", "update quantity", "make it", "only one"}):
-        return "update_quantity"
-    if contains_any(normalized, HUMAN_ESCALATION_PATTERNS):
+    if contains_any(normalized, {"talk to a person", "talk to human", "customer support", "connect me with an agent", "human please", "human", "agent", "representative"}):
         return "human_handoff"
-    if contains_any(normalized, {"bulk order", "boxes", "box order", "large order"}):
+    if contains_any(normalized, {"subscription status", "show my subscription", "show my plan", "what is my plan", "is my subscription active", "active subscription"}):
+        return "subscription_status"
+    if contains_any(normalized, {"cancel subscription", "cancel my subscription"}):
+        return "cancel_subscription"
+    if contains_any(normalized, {"pause my subscription", "pause subscription"}):
+        return "pause_subscription"
+    if contains_any(normalized, {"resume my subscription", "resume subscription"}):
+        return "resume_subscription"
+    if contains_any(normalized, {"skip tomorrow", "skip friday", "skip meal", "skip lunch", "skip dinner", "skip breakfast"}):
+        return "skip_meal"
+    if contains_any(normalized, {"bulk order", "large order", "boxes"}):
         return "bulk_order"
-    if contains_any(normalized, {"remove", "delete", "take out"}):
-        return "remove_meal"
-    if contains_any(normalized, {"add", "order", "buy", "get me", "i want", "need", "mangwa", "bhej", "laga", "rakh", "kar do", "kr do", "chahiye"}):
-        return "add_meal"
-    if contains_any(normalized, {"view cart", "show cart", "cart", "basket"}):
+    if contains_any(normalized, {"cancel my order", "cancel order", "i do not want this order"}):
+        return "cancel_order"
+    if contains_any(normalized, {"track my order", "track order", "order status", "where is my order", "status of order"}) or (extract_order_reference(text) is not None and "cancel" not in normalized):
+        return "track_order"
+    if contains_any(normalized, {"my address is", "deliver to", "address:", "send to", "i live at", "location is"}):
+        return "provide_address"
+    if contains_any(normalized, {"confirm order", "place order", "proceed", "place my order"}) or normalized in {"confirm", "yes"}:
+        return "confirm_order"
+    if contains_any(normalized, {"view cart", "show my cart", "what have i ordered", "show cart"}) or normalized == "cart":
         return "view_cart"
-    if contains_any(normalized, {"today's menu", "today menu", "aaj ka menu", "aaj menu", "what is today's menu", "what's today's menu", "aaj ka lunch", "aaj ka breakfast", "aaj ka dinner"}):
+    if contains_any(normalized, {"remove", "delete", "take out"}):
+        return "remove_item"
+    if contains_any(normalized, {"today's menu", "today menu", "what is available today", "what can i order today", "available today", "share menu", "menu please"}):
         return "today_menu"
-    if contains_any(normalized, {"breakfast", "nashta", "nashtay", "subah ka khana"}):
-        return "breakfast_menu"
-    if contains_any(normalized, {"lunch", "dopeher", "dopahar", "lunch menu"}):
-        return "lunch_menu"
-    if contains_any(normalized, {"dinner", "raat ka khana", "shaam ka khana", "dinner menu"}):
-        return "dinner_menu"
-    if contains_any(normalized, {"menu", "available meals", "what's available", "what is available", "show", "dikhao", "batao", "options", "kya hai", "kia hai"}):
+    if contains_any(normalized, {"weekly menu", "show weekly menu", "this week's meals", "weekly plan", "what is available this week", "show me the menu"}):
         return "weekly_menu"
-    if contains_any(normalized, {"delivery area", "deliver to", "where do you deliver", "gulberg", "dha lahore", "johar town", "model town", "hostel", "office building"}):
+    meal_type = extract_meal_type(normalized)
+    if meal_type is not None and (_phrase_in_text(normalized, "menu") or normalized in {"breakfast", "lunch", "dinner", "nashta"} or contains_any(normalized, {"kya hai", "kia hai"}) or extract_day(text) is not None):
+        return f"{meal_type}_menu"
+    if normalized in {"show breakfast", "breakfast menu"}:
+        return "breakfast_menu"
+    if normalized in {"show lunch", "lunch menu", "any lunch today", "what is for lunch"}:
+        return "lunch_menu"
+    if normalized in {"show dinner", "dinner menu", "what is for dinner"}:
+        return "dinner_menu"
+    if contains_any(normalized, {"subscription plans", "show subscription plans", "show plans", "what subscriptions do you offer", "tiffin plans"}) or normalized == "subscribe":
+        return "subscription_plans"
+    if (contains_any(normalized, {"weekly", "monthly"}) and _phrase_in_text(normalized, "plan")) or contains_any(normalized, {"start a", "select", "subscribe me"}) or bool(re.search(r"\bplan\s+\d+\b", normalized)):
+        return "create_subscription"
+    if contains_any(normalized, {"where do you deliver", "delivery area", "do you deliver to", "deliver to islamabad"}):
         return "delivery_area"
-    if contains_any(normalized, {"delivery timing", "timing", "what time", "delivery window"}):
+    if contains_any(normalized, {"delivery timings", "delivery timing", "what time do you deliver", "delivery window"}):
         return "delivery_timing"
-    if contains_any(normalized, {"payment methods", "cash on delivery", "bank transfer", "online transfer", "cod"}):
+    if contains_any(normalized, {"payment methods", "how can i pay", "cash on delivery", "bank transfer", "online transfer"}):
         return "payment_methods"
-    if contains_any(normalized, {"faq", "policy", "hours", "open", "accept", "delivery", "cash", "card", "timing", "timings"}):
+    if contains_any(normalized, {"refund policy", "refund", "policy", "policies", "allergies", "allergen", "cancel a meal", "food safety", "hours", "open", "operating hours"}):
         return "faq"
-    if contains_any(normalized, {"hi", "hello", "hey", "good morning", "good afternoon", "good evening", "assalam", "salaam", "salam"}):
+    if contains_any(normalized, {"hello", "hi", "hey", "start", "help", "salam", "salaam", "assalam o alaikum", "assalamualaikum", "assalamu alaikum"}):
         return "greeting"
+    if _phrase_in_text(normalized, "menu"):
+        return "weekly_menu"
+    if contains_any(normalized, {"add", "order", "i want", "need", "get me", "send me", "add item number"}):
+        return "add_item"
     return "fallback"

@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 import asyncio
 
 
-def _today_day_name() -> str:
-    return datetime.now(timezone.utc).strftime('%A')
+def _workflow_day_name(workflow) -> str:
+    return workflow._message_day('today')
 
 
 def test_today_menu_uses_database_items(workflow, seeded_tiffin_catalog) -> None:
@@ -19,7 +17,7 @@ def test_today_menu_uses_database_items(workflow, seeded_tiffin_catalog) -> None
         )
     )
 
-    today = _today_day_name()
+    today = _workflow_day_name(workflow)
     day_menu = seeded_tiffin_catalog.list_daily_menu(today)
 
     assert result['intent'] == 'today_menu'
@@ -59,7 +57,7 @@ def test_breakfast_menu_mentions_breakfast_items(workflow, seeded_tiffin_catalog
         )
     )
 
-    today = _today_day_name()
+    today = _workflow_day_name(workflow)
     breakfast_items = seeded_tiffin_catalog.list_daily_menu(today)['breakfast']
 
     assert result['intent'] == 'breakfast_menu'
@@ -78,7 +76,7 @@ def test_lunch_menu_mentions_lunch_items(workflow, seeded_tiffin_catalog) -> Non
         )
     )
 
-    today = _today_day_name()
+    today = _workflow_day_name(workflow)
     lunch_items = seeded_tiffin_catalog.list_daily_menu(today)['lunch']
 
     assert result['intent'] == 'lunch_menu'
@@ -97,7 +95,7 @@ def test_dinner_menu_mentions_dinner_items(workflow, seeded_tiffin_catalog) -> N
         )
     )
 
-    today = _today_day_name()
+    today = _workflow_day_name(workflow)
     dinner_items = seeded_tiffin_catalog.list_daily_menu(today)['dinner']
 
     assert result['intent'] == 'dinner_menu'
@@ -116,9 +114,45 @@ def test_roman_urdu_menu_phrases_are_supported(workflow, seeded_tiffin_catalog) 
         )
     )
 
-    today = _today_day_name()
+    today = _workflow_day_name(workflow)
     breakfast_items = seeded_tiffin_catalog.list_daily_menu(today)['breakfast']
 
     assert result['intent'] == 'breakfast_menu'
     assert breakfast_items[0].name.lower() in result['response'].lower()
 
+
+def test_address_only_message_is_accepted_during_checkout(workflow) -> None:
+    conversation_id = 'menu-address-flow'
+    customer_phone = '15551234567'
+
+    asyncio.run(
+        workflow.run(
+            'Add Chicken Biryani',
+            conversation_id=conversation_id,
+            customer_phone=customer_phone,
+            message_id='menu-address-1',
+        )
+    )
+
+    address_result = asyncio.run(
+        workflow.run(
+            'House 12, Street 4, Islamabad',
+            conversation_id=conversation_id,
+            customer_phone=customer_phone,
+            message_id='menu-address-2',
+        )
+    )
+
+    confirm_result = asyncio.run(
+        workflow.run(
+            'Confirm order',
+            conversation_id=conversation_id,
+            customer_phone=customer_phone,
+            message_id='menu-address-3',
+        )
+    )
+
+    assert address_result['intent'] == 'provide_address'
+    assert 'saved your delivery address' in address_result['response'].lower()
+    assert 'placed successfully' in confirm_result['response'].lower()
+    assert 'order number:' in confirm_result['response'].lower()

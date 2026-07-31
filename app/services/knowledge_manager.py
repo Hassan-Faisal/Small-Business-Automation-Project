@@ -29,19 +29,24 @@ class KnowledgeManager:
         load it. Otherwise, create it from the knowledge base.
         """
 
-        if self.vector_store.exists():
-            logger.info("Loading existing vector database...")
+        try:
+            if self.vector_store.exists():
+                logger.info("Loading existing vector database...")
+                self.vector_store.load()
+                logger.info("Vector database loaded successfully.")
+                return
+        except Exception:
+            logger.exception("vector_database_load_failed")
 
-            self.vector_store.load()
-
-            logger.info("Vector database loaded successfully.")
-            return
-
-        logger.info("No vector database found. Creating a new one...")
+        logger.info("No usable vector database found. Creating a new one...")
 
         documents = self.loader.load_documents()
+        if not documents:
+            raise RuntimeError("Knowledge base documents are missing. RAG cannot be initialized.")
 
         chunks = self.splitter.split_documents(documents)
+        if not chunks:
+            raise RuntimeError("Knowledge base documents did not produce any chunks.")
 
         self.vector_store.create(chunks)
 

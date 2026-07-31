@@ -103,9 +103,16 @@ def install_fake_twilio_modules(monkeypatch: Any) -> None:
     monkeypatch.setitem(sys.modules, "twilio.twiml.messaging_response", messaging_response_module)
 
 
-def set_twilio_settings(monkeypatch: Any, *, enabled: bool = True, token: str = "test-auth-token") -> None:
+def set_twilio_settings(
+    monkeypatch: Any,
+    *,
+    enabled: bool = True,
+    token: str = "test-auth-token",
+    trust_forwarded_headers: bool = False,
+) -> None:
     monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", token, raising=False)
     monkeypatch.setattr(settings, "TWILIO_SIGNATURE_VERIFICATION_ENABLED", enabled, raising=False)
+    monkeypatch.setattr(settings, "TWILIO_TRUST_FORWARDED_HEADERS", trust_forwarded_headers, raising=False)
 
 
 def test_valid_twilio_webhook_returns_xml_message(monkeypatch: Any) -> None:
@@ -136,6 +143,60 @@ def test_valid_twilio_webhook_returns_xml_message(monkeypatch: Any) -> None:
         }
     ]
     assert outbound_service.calls == []
+
+
+def test_twilio_webhook_rejects_forwarded_public_url_signature_when_forwarded_headers_untrusted(monkeypatch: Any) -> None:
+    install_fake_twilio_modules(monkeypatch)
+    set_twilio_settings(monkeypatch, trust_forwarded_headers=False)
+
+    chat_service = FakeChatService(response="Should not pass")
+    app = build_app(chat_service)
+
+    payload = twilio_payload(body="Hi from production")
+    public_url = "https://demo.example.com/webhooks/twilio"
+    signature = twilio_signature(public_url, payload, "test-auth-token")
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/webhooks/twilio",
+            data=payload,
+            headers={
+                "X-Twilio-Signature": signature,
+                "X-Forwarded-Proto": "https",
+                "X-Forwarded-Host": "demo.example.com",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.text == '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
+    assert chat_service.calls == []
+
+
+def test_twilio_webhook_accepts_forwarded_public_url_signature_when_forwarded_headers_trusted(monkeypatch: Any) -> None:
+    install_fake_twilio_modules(monkeypatch)
+    set_twilio_settings(monkeypatch, trust_forwarded_headers=True)
+
+    chat_service = FakeChatService(response="Forwarded URL works")
+    app = build_app(chat_service)
+
+    payload = twilio_payload(body="Hi from production")
+    public_url = "https://demo.example.com/webhooks/twilio"
+    signature = twilio_signature(public_url, payload, "test-auth-token")
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/webhooks/twilio",
+            data=payload,
+            headers={
+                "X-Twilio-Signature": signature,
+                "X-Forwarded-Proto": "https",
+                "X-Forwarded-Host": "demo.example.com",
+            },
+        )
+
+    assert response.status_code == 200
+    assert "Forwarded URL works" in response.text
+    assert len(chat_service.calls) == 1
 
 
 def test_menu_reply_text_is_returned_inside_message(monkeypatch: Any) -> None:

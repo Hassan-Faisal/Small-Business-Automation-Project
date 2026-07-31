@@ -141,3 +141,4 @@ def test_app_startup_does_not_modify_seeded_catalog(tmp_path, monkeypatch) -> No
     finally:
         session.close()
         engine.dispose()
+

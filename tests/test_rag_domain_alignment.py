@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from langchain_core.documents import Document
 
 from app.rag.domain_boundary import decide_rag_usage, is_dynamic_business_question
 from app.rag.document_loader import DocumentLoader
@@ -11,12 +12,13 @@ from app.services.knowledge_manager import KnowledgeManager
 
 
 class DummyRetriever:
-    def __init__(self) -> None:
+    def __init__(self, documents: list[Document] | None = None) -> None:
         self.calls: list[str] = []
+        self.documents = documents or []
 
     def invoke(self, question: str):
         self.calls.append(question)
-        return []
+        return self.documents
 
 
 class DummyLLM:
@@ -72,7 +74,7 @@ def test_rag_prompt_uses_tiffinai_context_and_policy_language() -> None:
 
 
 def test_policy_question_is_allowed_through_rag(monkeypatch) -> None:
-    retriever = DummyRetriever()
+    retriever = DummyRetriever([Document(page_content='Delivery hours: 9 AM to 9 PM')])
     chain = RAGChain()
     chain.retriever = retriever  # type: ignore[assignment]
     chain.llm = DummyLLM()  # type: ignore[assignment]
