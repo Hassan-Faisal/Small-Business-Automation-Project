@@ -6,6 +6,8 @@ import pytest
 
 from app.core.config import Settings
 from app.core.database import _engine_kwargs, get_db  # type: ignore[attr-defined]
+from app.data.tiffin_seed import seed_tiffin_catalog
+from sqlalchemy.orm import sessionmaker
 from app.services.chat_service import ChatService
 
 
@@ -93,3 +95,31 @@ def test_chat_service_uses_fresh_session_per_interaction(monkeypatch: pytest.Mon
     assert len(opened) == 2
     assert opened[0] is not opened[1]
     assert closed == opened
+
+
+
+def test_production_chat_service_returns_seeded_weekly_menu(db_session) -> None:
+    seed_tiffin_catalog(db_session)
+    session_factory = sessionmaker(
+        bind=db_session.get_bind(),
+        autoflush=False,
+        expire_on_commit=False,
+    )
+
+    class DummyRAG:
+        async def ask(self, message: str) -> str:
+            return "policy response"
+
+    service = ChatService(rag_chain=DummyRAG(), session_factory=session_factory)
+    response = asyncio.run(
+        service.chat(
+            "weekly menu",
+            conversation_id="production-menu-regression",
+            customer_phone="15551234567",
+            message_id="production-menu-regression-1",
+        )
+    )
+
+    assert "Anda Paratha" in response
+    assert "Chicken Biryani" in response
+    assert "Weekly menu is not available yet" not in response
