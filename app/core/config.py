@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4.1-mini"
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
-    DATABASE_URL: str = "sqlite:///./business.db"
+    DATABASE_URL: str
     WHATSAPP_VERIFY_TOKEN: str = ""
     WHATSAPP_ACCESS_TOKEN: str = ""
     WHATSAPP_PHONE_NUMBER_ID: str = ""
@@ -31,23 +31,21 @@ class Settings(BaseSettings):
 
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
-    def normalize_database_url(cls, value: str | None) -> str:
-        if not value:
-            return "sqlite:///./business.db"
+    def validate_database_url(cls, value: str | None) -> str:
+        if value is None:
+            raise ValueError("DATABASE_URL is required.")
 
-        if not isinstance(value, str):
-            return str(value)
+        database_url = str(value).strip()
+        if not database_url:
+            raise ValueError("DATABASE_URL is required.")
 
-        if value.startswith("sqlite:///./"):
-            project_root = Path(__file__).resolve().parents[2]
-            relative_path = value[len("sqlite:///./") :]
-            resolved_path = (project_root / relative_path).resolve()
-            return f"sqlite:///{resolved_path.as_posix()}"
+        if database_url.startswith("postgres://"):
+            database_url = f"postgresql://{database_url[len('postgres://') :]}"
 
-        if value.startswith("sqlite:///") and value.count("://") == 1:
-            return value
+        if not database_url.startswith(("postgresql://", "postgresql+")):
+            raise ValueError("DATABASE_URL must be a PostgreSQL SQLAlchemy URL.")
 
-        return value
+        return database_url
 
 
 settings = Settings()

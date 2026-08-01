@@ -36,11 +36,9 @@ def test_ready_endpoint_success(client):
 
 
 def test_ready_endpoint_failure(app, monkeypatch):
-    class FailingFactory:
-        def __call__(self):
-            raise RuntimeError('database unavailable')
+    import app.api.routes.health as health_module
 
-    app.state.db_session_factory = FailingFactory()
+    monkeypatch.setattr(health_module, 'check_database_connection', lambda: (_ for _ in ()).throw(RuntimeError('database unavailable')))
 
     with TestClient(app, raise_server_exceptions=False) as test_client:
         response = test_client.get('/ready')
@@ -84,20 +82,15 @@ def test_unhandled_exception_uses_safe_format(app):
     }
 
 
-def test_lifespan_bootstraps_database_and_seed(monkeypatch):
+def test_lifespan_starts_without_running_migrations_or_seed(monkeypatch):
     from fastapi import FastAPI
 
     import app.core.lifespan as lifespan_module
 
     called: dict[str, object] = {}
 
-    class DummySession:
-        def close(self) -> None:
-            called['session_closed'] = True
-
     class DummyKnowledgeManager:
-        def initialize(self) -> None:
-            called['knowledge_initialized'] = True
+        pass
 
     class DummyRAGChain:
         def __init__(self, *args, **kwargs) -> None:
@@ -107,20 +100,19 @@ def test_lifespan_bootstraps_database_and_seed(monkeypatch):
         def __init__(self, *args, **kwargs) -> None:
             called['chat_initialized'] = True
 
-    def fake_session_factory() -> DummySession:
-        called['session_factory_used'] = True
-        return DummySession()
+    def fake_check_database_connection() -> None:
+        called['database_checked'] = True
 
-    monkeypatch.setattr(settings, 'OPENAI_API_KEY', 'test-openai-key', raising=False)
-    monkeypatch.setattr(settings, 'TWILIO_AUTH_TOKEN', 'test-twilio-token', raising=False)
-    monkeypatch.setattr(settings, 'TWILIO_SIGNATURE_VERIFICATION_ENABLED', True, raising=False)
-    monkeypatch.setattr(lifespan_module, 'initialize_database', lambda: called.__setitem__('database_initialized', True))
-    monkeypatch.setattr(lifespan_module, 'build_session_factory', lambda: fake_session_factory)
-    monkeypatch.setattr(lifespan_module, 'seed_tiffin_catalog', lambda session: called.__setitem__('seed_session', session))
+    def fake_session_factory():
+        called['session_factory_used'] = True
+        return object()
+
+    monkeypatch.setattr(settings, 'TWILIO_SIGNATURE_VERIFICATION_ENABLED', False, raising=False)
+    monkeypatch.setattr(lifespan_module, 'check_database_connection', fake_check_database_connection)
+    monkeypatch.setattr(lifespan_module, 'get_session_factory', lambda: fake_session_factory)
     monkeypatch.setattr(lifespan_module, 'KnowledgeManager', DummyKnowledgeManager)
     monkeypatch.setattr(lifespan_module, 'RAGChain', DummyRAGChain)
     monkeypatch.setattr(lifespan_module, 'ChatService', DummyChatService)
-    monkeypatch.setattr(lifespan_module, '_get_twilio_request_validator', lambda: None)
 
     async def run_lifespan() -> None:
         app = FastAPI()
@@ -129,24 +121,19 @@ def test_lifespan_bootstraps_database_and_seed(monkeypatch):
 
     asyncio.run(run_lifespan())
 
-    assert called['database_initialized'] is True
-    assert called['session_factory_used'] is True
-    assert called['session_closed'] is True
-    assert called['seed_session'].__class__ is DummySession
-    assert called['knowledge_initialized'] is True
+    assert called['database_checked'] is True
     assert called['rag_initialized'] is True
     assert called['chat_initialized'] is True
+    assert 'session_factory_used' not in called
 
 
-def test_lifespan_requires_openai_api_key(monkeypatch):
+def test_lifespan_requires_database_url(monkeypatch):
     from fastapi import FastAPI
 
     import app.core.lifespan as lifespan_module
 
-    monkeypatch.setattr(settings, 'DATABASE_URL', 'sqlite:///./test.db', raising=False)
-    monkeypatch.setattr(settings, 'OPENAI_API_KEY', '', raising=False)
-    monkeypatch.setattr(settings, 'TWILIO_AUTH_TOKEN', 'test-twilio-token', raising=False)
-    monkeypatch.setattr(settings, 'TWILIO_SIGNATURE_VERIFICATION_ENABLED', True, raising=False)
+    monkeypatch.setattr(settings, 'DATABASE_URL', '', raising=False)
+    monkeypatch.setattr(settings, 'TWILIO_SIGNATURE_VERIFICATION_ENABLED', False, raising=False)
 
     async def run_lifespan() -> None:
         async with lifespan_module.lifespan(FastAPI()):
@@ -155,6 +142,39 @@ def test_lifespan_requires_openai_api_key(monkeypatch):
     try:
         asyncio.run(run_lifespan())
     except RuntimeError as exc:
-        assert str(exc) == 'Missing required setting: OPENAI_API_KEY'
+        assert str(exc) == 'Missing required setting: DATABASE_URL'
     else:
-        raise AssertionError('Expected startup to fail when OPENAI_API_KEY is missing.')
+        raise AssertionError('Expected startup to fail when DATABASE_URL is missing.')
+
+
+def test_lifespan_does_not_require_openai_api_key(monkeypatch):
+    from fastapi import FastAPI
+
+    import app.core.lifespan as lifespan_module
+
+    monkeypatch.setattr(settings, 'DATABASE_URL', 'postgresql+psycopg2://postgres:postgres@localhost:5432/tiffin_ai', raising=False)
+    monkeypatch.setattr(settings, 'OPENAI_API_KEY', '', raising=False)
+    monkeypatch.setattr(settings, 'TWILIO_SIGNATURE_VERIFICATION_ENABLED', False, raising=False)
+    monkeypatch.setattr(lifespan_module, 'check_database_connection', lambda: None)
+    monkeypatch.setattr(lifespan_module, 'get_session_factory', lambda: (lambda: object()))
+
+    class DummyKnowledgeManager:
+        pass
+
+    class DummyRAGChain:
+        def __init__(self, *args, **kwargs) -> None:
+            return None
+
+    class DummyChatService:
+        def __init__(self, *args, **kwargs) -> None:
+            return None
+
+    monkeypatch.setattr(lifespan_module, 'KnowledgeManager', DummyKnowledgeManager)
+    monkeypatch.setattr(lifespan_module, 'RAGChain', DummyRAGChain)
+    monkeypatch.setattr(lifespan_module, 'ChatService', DummyChatService)
+
+    async def run_lifespan() -> None:
+        async with lifespan_module.lifespan(FastAPI()):
+            return None
+
+    asyncio.run(run_lifespan())

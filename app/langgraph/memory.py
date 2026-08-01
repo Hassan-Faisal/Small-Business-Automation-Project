@@ -3,15 +3,14 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.database import SessionLocal
 from app.models.conversation_state import ConversationStateRecord
 
 
 class ConversationMemory:
     """Persistent conversation store for LangGraph development and webhook idempotency."""
 
-    def __init__(self, db: Session | None = None) -> None:
-        self.db = db or SessionLocal()
+    def __init__(self, db: Session) -> None:
+        self.db = db
 
     def _load_record(self, conversation_id: str) -> ConversationStateRecord | None:
         stmt = select(ConversationStateRecord).where(ConversationStateRecord.conversation_id == conversation_id)

@@ -5,7 +5,7 @@ from contextlib import closing
 
 from sqlalchemy.orm import Session
 
-from app.core.database import SessionLocal
+from app.core.database import get_session_factory
 from app.langgraph.memory import ConversationMemory
 from app.langgraph.workflow import OrderConversationWorkflow
 from app.rag.rag_chain import RAGChain
@@ -26,7 +26,7 @@ class ChatService:
         session_factory: Callable[[], Session] | None = None,
     ):
         self.rag_chain = rag_chain
-        self._session_factory = session_factory or SessionLocal
+        self._session_factory = session_factory or get_session_factory()
         self.product_service = product_service
         self.order_service = order_service
         self.meal_service = meal_service
@@ -35,13 +35,14 @@ class ChatService:
         if product_service is not None and order_service is not None and meal_service is not None:
             memory_session = getattr(product_service, "db", None)
             memory = ConversationMemory(memory_session) if isinstance(memory_session, Session) else None
-            self.workflow = OrderConversationWorkflow(
-                rag_chain=rag_chain,
-                product_service=product_service,
-                order_service=order_service,
-                meal_service=meal_service,
-                memory=memory,
-            )
+            if memory is not None:
+                self.workflow = OrderConversationWorkflow(
+                    rag_chain=rag_chain,
+                    product_service=product_service,
+                    order_service=order_service,
+                    meal_service=meal_service,
+                    memory=memory,
+                )
 
     async def chat(
         self,

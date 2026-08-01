@@ -15,12 +15,11 @@ graph-test-*/
 *.db
 *.sqlite
 *.sqlite3
+*.db.bak-*
 
 # Local vector stores
 chroma_db/
-
-# Runtime storage
-storage/
+storage/chroma/
 
 # IDE
 .vscode/

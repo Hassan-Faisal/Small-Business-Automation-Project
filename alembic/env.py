@@ -16,7 +16,16 @@ from app.core.database import Base
 import app.models  # noqa: F401
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+
+
+def _resolve_database_url() -> str:
+    configured_url = config.get_main_option("sqlalchemy.url")
+    if configured_url and configured_url.strip() and configured_url != "__from_settings__":
+        return configured_url
+    return settings.DATABASE_URL
+
+
+config.set_main_option("sqlalchemy.url", _resolve_database_url())
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -31,6 +40,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        compare_type=True,
     )
 
     with context.begin_transaction():
@@ -48,6 +58,7 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
+            compare_type=True,
         )
 
         with context.begin_transaction():

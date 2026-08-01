@@ -3,22 +3,21 @@ from __future__ import annotations
 import logging
 
 from app.rag.domain_boundary import decide_rag_usage, is_dynamic_business_question
-from app.services.knowledge_manager import KnowledgeManager
+from app.services.knowledge_manager import KnowledgeManager, KnowledgeManagerUnavailableError
 from app.services.openai_service import OpenAIService
 
 logger = logging.getLogger(__name__)
 POLICY_FALLBACK = "I could not find that information in the TiffinAI policy documents. Please contact support."
+POLICY_UNAVAILABLE_FALLBACK = "TiffinAI policy information is temporarily unavailable. Please contact support or try again shortly."
 
 
 class RAGChain:
     """Retrieval-Augmented Generation pipeline for TiffinAI policy and FAQ support."""
 
-    def __init__(self, knowledge_manager: KnowledgeManager | None = None):
+    def __init__(self, knowledge_manager: KnowledgeManager | None = None, llm: OpenAIService | None = None):
         self.knowledge_manager = knowledge_manager
         self.retriever = None
-        self.llm = OpenAIService()
-        if knowledge_manager is not None:
-            self.retriever = knowledge_manager.get_retriever()
+        self.llm = llm or OpenAIService()
 
     def build_prompt(self, question: str, context: str) -> str:
         return f"""You are TiffinAI, a WhatsApp support assistant for a meal ordering business.
@@ -49,17 +48,44 @@ Answer:
             return "That question needs live menu, order, or customer data. Please use the ordering workflow or contact support."
         return POLICY_FALLBACK
 
+    def _get_retriever(self):
+        if self.retriever is not None:
+            return self.retriever
+        if self.knowledge_manager is None:
+            raise KnowledgeManagerUnavailableError("RAG knowledge manager is not configured.")
+        self.retriever = self.knowledge_manager.get_retriever()
+        return self.retriever
+
     async def ask(self, question: str) -> str:
-        if self.retriever is None:
-            return POLICY_FALLBACK
         decision = decide_rag_usage(question)
         if not decision.use_rag:
             logger.info("rag_dynamic_question_blocked", extra={"event": "rag_dynamic_question_blocked", "reason": decision.reason})
             return self._safe_static_fallback(question)
-        documents = self.retriever.invoke(question)
+
+        try:
+            retriever = self._get_retriever()
+        except KnowledgeManagerUnavailableError:
+            logger.warning(
+                "rag_retriever_unavailable",
+                extra={"event": "rag_retriever_unavailable"},
+            )
+            return POLICY_UNAVAILABLE_FALLBACK
+        except Exception:
+            logger.exception(
+                "rag_retriever_resolution_failed",
+                extra={"event": "rag_retriever_resolution_failed"},
+            )
+            return POLICY_UNAVAILABLE_FALLBACK
+
+        documents = retriever.invoke(question)
         context = "\n\n".join(document.page_content for document in documents)
         if not context.strip():
             return POLICY_FALLBACK
+
         prompt = self.build_prompt(question=question, context=context)
-        response = await self.llm.generate_response(prompt)
+        try:
+            response = await self.llm.generate_response(prompt)
+        except Exception:
+            logger.exception("rag_llm_call_failed", extra={"event": "rag_llm_call_failed"})
+            return POLICY_UNAVAILABLE_FALLBACK
         return response or POLICY_FALLBACK

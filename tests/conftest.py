@@ -6,6 +6,9 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+os.environ.setdefault("DATABASE_URL", "postgresql+psycopg2://postgres:postgres@localhost:5432/tiffin_ai")
+os.environ.setdefault("TWILIO_AUTH_TOKEN", "test-twilio-token")
+
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
@@ -24,7 +27,7 @@ from app.api.routes.products import router as products_router
 from app.api.routes.root import router as root_router
 from app.api.routes.webhook import router as webhook_router
 from app.core.config import settings
-from app.core.database import Base, get_db
+from app.core.database import dispose_database_resources, get_db
 from app.core.middleware import RequestLoggingMiddleware
 from app.dependencies.chat import get_chat_service
 from app.langgraph.memory import ConversationMemory
@@ -57,17 +60,16 @@ def test_database_path(tmp_path: Path) -> Path:
 def engine(test_database_path: Path, monkeypatch: pytest.MonkeyPatch):
     database_url = f"sqlite:///{test_database_path.as_posix()}"
     monkeypatch.setattr(settings, "DATABASE_URL", database_url)
+    dispose_database_resources()
     alembic_cfg = Config(str(PROJECT_ROOT / "alembic.ini"))
     alembic_cfg.set_main_option("sqlalchemy.url", database_url)
     command.upgrade(alembic_cfg, "head")
-    engine = create_engine(
-        database_url,
-        connect_args={"check_same_thread": False},
-    )
+    engine = create_engine(database_url)
     try:
         yield engine
     finally:
         engine.dispose()
+        dispose_database_resources()
 
 
 @pytest.fixture()
