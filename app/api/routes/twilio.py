@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import unicodedata
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
@@ -11,6 +12,31 @@ from app.core.config import settings
 from app.services.whatsapp_transport import WhatsAppWebhookService
 
 logger = logging.getLogger(__name__)
+MAX_REPLY_LENGTH = 1500
+_REPLY_CONTINUATION = "\n\nSome details were shortened. Ask for breakfast, lunch, or dinner separately."
+
+
+def _limit_reply_text(reply_text: str) -> str:
+    original_length = len(reply_text)
+    logger.info(
+        "twilio_reply_length_checked",
+        extra={
+            "event": "twilio_reply_length_checked",
+            "original_reply_length": original_length,
+            "max_reply_length": MAX_REPLY_LENGTH,
+        },
+    )
+    if original_length <= MAX_REPLY_LENGTH:
+        return reply_text
+
+    available = MAX_REPLY_LENGTH - len(_REPLY_CONTINUATION)
+    shortened = reply_text[:available]
+    word_break = shortened.rfind(" ")
+    if word_break > 0:
+        shortened = shortened[:word_break]
+    while shortened and unicodedata.combining(shortened[-1]):
+        shortened = shortened[:-1]
+    return shortened.rstrip(" \t\r\n,;:-") + _REPLY_CONTINUATION
 
 router = APIRouter(prefix="/webhooks/twilio", tags=["Twilio WhatsApp"])
 
@@ -164,6 +190,7 @@ async def inbound_twilio_webhook(request: Request) -> Response:
         )
         return _empty_twiml()
 
+    reply_text = _limit_reply_text(reply_text)
     twiml_response = _build_twiml(reply_text)
 
     logger.info(

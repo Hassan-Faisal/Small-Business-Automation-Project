@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import sys
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from types import ModuleType
 from typing import Any
@@ -241,3 +242,23 @@ def test_duplicate_messagesid_does_not_repeat_processing(monkeypatch: Any) -> No
     assert second["processing_result"] == "already_processed"
     assert len(chat_service.calls) == 1
     assert outbound_service.calls == []
+
+def test_twilio_reply_text_is_limited_to_1500_characters(monkeypatch: Any) -> None:
+    install_fake_twilio_modules(monkeypatch)
+    set_twilio_settings(monkeypatch)
+
+    chat_service = FakeChatService(response={"response": "Long menu item " * 200})
+    app = build_app(chat_service)
+    payload = twilio_payload(body="weekly menu")
+    url = "http://testserver/webhooks/twilio"
+    signature = twilio_signature(url, payload, "test-auth-token")
+
+    with TestClient(app) as client:
+        response = client.post("/webhooks/twilio", data=payload, headers={"X-Twilio-Signature": signature})
+
+    assert response.status_code == 200
+    message = ET.fromstring(response.content).find("Message")
+    assert message is not None
+    assert message.text is not None
+    assert len(message.text) <= 1500
+    assert "Some details were shortened" in message.text

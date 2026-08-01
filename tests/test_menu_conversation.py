@@ -28,7 +28,7 @@ def test_today_menu_uses_database_items(workflow, seeded_tiffin_catalog) -> None
     assert day_menu['breakfast'][0].name.lower() in result['response'].lower()
 
 
-def test_weekly_menu_shows_monday_to_sunday(workflow, seeded_tiffin_catalog) -> None:
+def test_weekly_menu_shows_day_selection(workflow, seeded_tiffin_catalog) -> None:
     result = asyncio.run(
         workflow.run(
             'Weekly menu',
@@ -38,15 +38,59 @@ def test_weekly_menu_shows_monday_to_sunday(workflow, seeded_tiffin_catalog) -> 
         )
     )
 
-    weekly_menu = seeded_tiffin_catalog.list_weekly_menu()
-
+    response = result['response']
     assert result['intent'] == 'weekly_menu'
-    response = result['response'].lower()
-    assert response.index('monday') < response.index('sunday')
-    for day in weekly_menu:
-        assert day.lower() in response
+    assert len(response) < 1500
+    assert 'Choose a day' in response
+    for index, day in enumerate(('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'), start=1):
+        assert f'{index}. {day}' in response
 
 
+def test_weekly_menu_day_name_returns_selected_day(workflow, seeded_tiffin_catalog) -> None:
+    conversation_id = 'menu-weekly-day-name'
+    asyncio.run(
+        workflow.run(
+            'weekly menu',
+            conversation_id=conversation_id,
+            customer_phone='15551234567',
+            message_id='menu-weekly-day-name-1',
+        )
+    )
+    result = asyncio.run(
+        workflow.run(
+            'Monday',
+            conversation_id=conversation_id,
+            customer_phone='15551234567',
+            message_id='menu-weekly-day-name-2',
+        )
+    )
+
+    assert 'Monday menu:' in result['response']
+    assert 'Anda Paratha' in result['response']
+    assert 'Chicken Biryani' in result['response']
+
+
+def test_weekly_menu_numeric_selection_returns_monday(workflow, seeded_tiffin_catalog) -> None:
+    conversation_id = 'menu-weekly-number'
+    asyncio.run(
+        workflow.run(
+            'weekly menu',
+            conversation_id=conversation_id,
+            customer_phone='15551234567',
+            message_id='menu-weekly-number-1',
+        )
+    )
+    result = asyncio.run(
+        workflow.run(
+            '1',
+            conversation_id=conversation_id,
+            customer_phone='15551234567',
+            message_id='menu-weekly-number-2',
+        )
+    )
+
+    assert 'Monday menu:' in result['response']
+    assert 'Chicken Biryani' in result['response']
 def test_breakfast_menu_mentions_breakfast_items(workflow, seeded_tiffin_catalog) -> None:
     result = asyncio.run(
         workflow.run(

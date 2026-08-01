@@ -28,12 +28,13 @@ from app.models.product import Product
 from app.rag.rag_chain import RAGChain
 from app.services.order_service import OrderService
 from app.services.product_service import ProductService
-from app.services.tiffin_service import BULK_ORDER_THRESHOLD, SubscriptionService, TiffinCatalogService, TiffinPolicyService
+from app.services.tiffin_service import BULK_ORDER_THRESHOLD, SubscriptionService, TiffinCatalogService, TiffinPolicyService, WEEKDAYS
 
 logger = setup_logger(__name__)
 MEAL_TYPES = ("breakfast", "lunch", "dinner")
 DEFAULT_REPLY = "I can help with today's menu, your cart, orders, subscriptions, and delivery policies. Try 'today menu', 'view cart', or 'subscription plans'."
 POLICY_FALLBACK = "I could not find that information in the TiffinAI policy documents. Please contact support."
+MAX_MENU_REPLY_LENGTH = 1500
 
 
 class OrderConversationWorkflow:
@@ -116,12 +117,20 @@ class OrderConversationWorkflow:
         context_type, options = self._message_options(list(memory_state.get("messages", [])))
         if not context_type or not options:
             return None
+        normalized_message = normalize_text(message)
         position = extract_position_reference(message)
-        if position is None:
-            return None
-        index = position - 1 if position > 0 else len(options) - 1
-        return options[index] if 0 <= index < len(options) else None
-
+        if position is None and normalized_message.isdigit():
+            position = int(normalized_message)
+        if position is not None:
+            index = position - 1 if position > 0 else len(options) - 1
+            return options[index] if 0 <= index < len(options) else None
+        if context_type == "menu_day":
+            selected_day = extract_day(message)
+            if selected_day is not None:
+                for option in options:
+                    if str(option.get("day") or "").lower() == selected_day.lower():
+                        return option
+        return None
     def _route_intent(self, state: ConversationState) -> ConversationState:
         memory_state = self._load_context(str(state.get("conversation_id", "default")))
         message = str(state.get("last_user_message", ""))
@@ -135,6 +144,9 @@ class OrderConversationWorkflow:
             elif context_type == "menu":
                 intent = "add_item"
                 state["pending_menu_option"] = selected
+            elif context_type == "menu_day":
+                intent = "today_menu"
+                state["selected_menu_day"] = str(selected.get("day") or "")
         if intent == "fallback" and self._looks_like_address(message):
             has_checkout_context = bool(memory_state.get("cart")) or bool(memory_state.get("address"))
             has_subscription_context = bool(self._phone(state.get("customer_phone") or memory_state.get("customer_phone")))
@@ -146,6 +158,15 @@ class OrderConversationWorkflow:
     def _greeting(self, state: ConversationState) -> ConversationState:
         state["last_response"] = "Assalam o Alaikum! Hello and welcome to TiffinAI.\n\nI can help you:\n1. View today's or weekly menu\n2. Add meals to your cart\n3. Place or track an order\n4. View or manage subscriptions\n5. Ask about delivery, payment, or policies\n\nWhat would you like to do?"
         return state
+
+    @staticmethod
+    def _limit_daily_menu(text: str) -> str:
+        continuation = "\n\nThis menu is long. Ask for breakfast, lunch, or dinner separately."
+        if len(text) <= MAX_MENU_REPLY_LENGTH:
+            return text
+        available = MAX_MENU_REPLY_LENGTH - len(continuation)
+        shortened = text[:available].rsplit(" ", 1)[0].rstrip()
+        return shortened + continuation
 
     def _format_daily_menu(self, day_of_week: str, meal_type: str | None = None) -> str:
         if self.meal_service is None:
@@ -161,35 +182,24 @@ class OrderConversationWorkflow:
                 if items:
                     lines.append(f"{current_meal.title()}:")
                     lines.extend(f"- {item.name} ({self._price(item.price)})" for item in items)
-            return "\n".join(lines)
+            return self._limit_daily_menu("\n".join(lines))
         items = self.meal_service.list_meals_for_day_and_type(day_name, meal_type)
         if not items:
             return f"No {meal_type} meals are available for {day_name} yet."
         lines = [f"{day_name} {meal_type} menu:"]
         lines.extend(f"- {item.name} ({self._price(item.price)})" for item in items)
-        return "\n".join(lines)
+        return self._limit_daily_menu("\n".join(lines))
 
     def _format_weekly_menu(self) -> tuple[str, list[dict[str, Any]]]:
         if self.meal_service is None:
             return "Weekly menu is not available yet. Please try again shortly.", []
         weekly_menu = self.meal_service.list_weekly_menu()
-        lines = ["This week's menu:"]
-        options: list[dict[str, Any]] = []
-        has_items = False
-        for day, day_menu in weekly_menu.items():
-            day_lines: list[str] = []
-            for meal_type in MEAL_TYPES:
-                items = day_menu.get(meal_type, [])
-                if items:
-                    has_items = True
-                    day_lines.append(f"{meal_type.title()}:")
-                    day_lines.extend(f"- {item.name} ({self._price(item.price)})" for item in items)
-                    options.extend({"label": item.name, "name": item.name} for item in items)
-            if day_lines:
-                lines.append(f"\n{day}:")
-                lines.extend(day_lines)
-        return ("\n".join(lines), options) if has_items else ("Weekly menu is not available yet. Please try again shortly.", [])
-
+        if not any(any(day_menu.get(meal_type) for meal_type in MEAL_TYPES) for day_menu in weekly_menu.values()):
+            return "Weekly menu is not available yet. Please try again shortly.", []
+        lines = ["Choose a day to view its menu:"]
+        options = [{"label": day, "day": day} for day in WEEKDAYS]
+        lines.extend(f"{index}. {day}" for index, day in enumerate(WEEKDAYS, start=1))
+        return "\n".join(lines), options
     def _resolve_products(self, message: str, pending_option: dict[str, Any] | None = None) -> list[Product]:
         if pending_option and pending_option.get("name"):
             product = self.product_service.retrieve_product_by_normalized_name(str(pending_option["name"]))
@@ -527,7 +537,7 @@ class OrderConversationWorkflow:
     async def _menu(self, state: ConversationState) -> ConversationState:
         message = str(state.get("last_user_message", ""))
         intent = str(state.get("intent") or "fallback")
-        day = extract_day(message, base_date=date.today()) or date.today().strftime("%A")
+        day = str(state.get("selected_menu_day") or extract_day(message, base_date=date.today()) or date.today().strftime("%A"))
         if intent == "today_menu":
             state["last_response"] = self._format_daily_menu(day)
         elif intent == "weekly_menu":
@@ -535,11 +545,10 @@ class OrderConversationWorkflow:
             state["last_response"] = text
             if options:
                 state["displayed_options"] = options
-                state["displayed_context_type"] = "menu"
+                state["displayed_context_type"] = "menu_day"
         else:
             state["last_response"] = self._format_daily_menu(day, meal_type=intent.replace("_menu", ""))
         return state
-
     async def _rag(self, state: ConversationState) -> ConversationState:
         try:
             state["last_response"] = self._reply(await self.rag_chain.ask(str(state.get("last_user_message", ""))) or POLICY_FALLBACK)

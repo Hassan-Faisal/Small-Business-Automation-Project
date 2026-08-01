@@ -120,6 +120,16 @@ def test_production_chat_service_returns_seeded_weekly_menu(db_session) -> None:
         )
     )
 
-    assert "Anda Paratha" in response
-    assert "Chicken Biryani" in response
-    assert "Weekly menu is not available yet" not in response
+    assert len(response) < 1500
+    assert "Choose a day" in response
+    selected_response = asyncio.run(
+        service.chat(
+            "Monday",
+            conversation_id="production-menu-regression",
+            customer_phone="15551234567",
+            message_id="production-menu-regression-2",
+        )
+    )
+    assert "Anda Paratha" in selected_response
+    assert "Chicken Biryani" in selected_response
+    assert "Weekly menu is not available yet" not in selected_response

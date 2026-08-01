@@ -31,7 +31,10 @@ def test_greeting_menu_cart_order_and_tracking_flow(workflow, customer_phone, fa
     weekly_menu = run_message(workflow, 'Weekly menu', conversation_id='demo-2', customer_phone=customer_phone, message_id='m3')
     assert weekly_menu['intent'] == 'weekly_menu'
     assert 'monday' in weekly_menu['response'].lower()
-    assert 'chicken biryani' in weekly_menu['response'].lower()
+    assert 'choose a day' in weekly_menu['response'].lower()
+    monday_menu = run_message(workflow, '1', conversation_id='demo-2', customer_phone=customer_phone, message_id='m4')
+    assert monday_menu['intent'] == 'today_menu'
+    assert 'chicken biryani' in monday_menu['response'].lower()
 
     lunch_menu = run_message(workflow, 'Lunch menu', conversation_id='demo-3', customer_phone=customer_phone, message_id='m4')
     assert lunch_menu['intent'] == 'lunch_menu'
