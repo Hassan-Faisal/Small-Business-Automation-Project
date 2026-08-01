@@ -5,7 +5,7 @@ import sqlalchemy as sa
 
 
 revision = "15d2a9ab0b17"
-down_revision = "0001a_add_conversation_state_records"
+down_revision = "0001a_conversation_state"
 branch_labels = None
 depends_on = None
 

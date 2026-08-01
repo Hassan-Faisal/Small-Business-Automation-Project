@@ -1,9 +1,10 @@
-from collections.abc import Generator
-from pathlib import Path
+from __future__ import annotations
 
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine
+from collections.abc import Generator
+
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import settings
@@ -15,51 +16,57 @@ class Base(DeclarativeBase):
     pass
 
 
+_engine: Engine | None = None
+_session_factory: sessionmaker[Session] | None = None
+
+
 def _engine_kwargs(database_url: str) -> dict[str, object]:
-    kwargs: dict[str, object] = {"echo": False}
-    if database_url.startswith("sqlite"):
-        kwargs["connect_args"] = {"check_same_thread": False}
-    else:
-        kwargs["pool_pre_ping"] = True
+    kwargs: dict[str, object] = {
+        "echo": False,
+        "pool_pre_ping": True,
+    }
+    if database_url.startswith("postgresql"):
+        kwargs["connect_args"] = {"connect_timeout": 5}
     return kwargs
 
 
-def build_session_factory(database_url: str | None = None) -> sessionmaker[Session]:
-    resolved_database_url = database_url or settings.DATABASE_URL
-    engine = create_engine(resolved_database_url, **_engine_kwargs(resolved_database_url))
-    return sessionmaker(
-        bind=engine,
-        autoflush=False,
-        expire_on_commit=False,
-    )
+def get_engine() -> Engine:
+    global _engine
+    if _engine is None:
+        _engine = create_engine(settings.DATABASE_URL, **_engine_kwargs(settings.DATABASE_URL))
+    return _engine
 
 
-engine = create_engine(settings.DATABASE_URL, **_engine_kwargs(settings.DATABASE_URL))
-
-SessionLocal = sessionmaker(
-    bind=engine,
-    autoflush=False,
-    expire_on_commit=False,
-)
+def get_session_factory() -> sessionmaker[Session]:
+    global _session_factory
+    if _session_factory is None:
+        _session_factory = sessionmaker(
+            bind=get_engine(),
+            autoflush=False,
+            expire_on_commit=False,
+        )
+    return _session_factory
 
 
 def get_db() -> Generator[Session, None, None]:
-    """
-    Provide a database session for FastAPI dependencies.
-
-    The session is always closed after the request is completed.
-    """
-    db = SessionLocal()
-
+    db = get_session_factory()()
     try:
         yield db
     finally:
         db.close()
 
 
-def initialize_database() -> None:
-    """Apply Alembic migrations for the configured database."""
-    project_root = Path(__file__).resolve().parents[2]
-    alembic_cfg = Config(str(project_root / "alembic.ini"))
-    alembic_cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
-    command.upgrade(alembic_cfg, "head")
+def check_database_connection() -> None:
+    try:
+        with get_engine().connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except SQLAlchemyError as exc:
+        raise RuntimeError("Database connectivity check failed.") from exc
+
+
+def dispose_database_resources() -> None:
+    global _engine, _session_factory
+    if _engine is not None:
+        _engine.dispose()
+    _engine = None
+    _session_factory = None

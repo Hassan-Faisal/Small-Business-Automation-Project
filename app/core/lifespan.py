@@ -3,13 +3,10 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from sqlalchemy.orm import Session, sessionmaker
 
-from app.api.routes.twilio import _get_twilio_request_validator
 from app.core.config import settings
-from app.core.database import build_session_factory, initialize_database
+from app.core.database import check_database_connection, dispose_database_resources, get_session_factory
 from app.core.logging import setup_logger
-from app.data.tiffin_seed import seed_tiffin_catalog
 from app.rag.rag_chain import RAGChain
 from app.services.chat_service import ChatService
 from app.services.knowledge_manager import KnowledgeManager
@@ -25,73 +22,65 @@ def _require_setting(name: str, value: str | None) -> None:
 
 def _validate_startup_configuration() -> None:
     _require_setting("DATABASE_URL", settings.DATABASE_URL)
-    _require_setting("OPENAI_API_KEY", settings.OPENAI_API_KEY)
     if getattr(settings, "TWILIO_SIGNATURE_VERIFICATION_ENABLED", True):
         _require_setting("TWILIO_AUTH_TOKEN", settings.TWILIO_AUTH_TOKEN)
 
 
-def _seed_demo_catalog(session_factory: sessionmaker[Session]) -> None:
-    session = session_factory()
-    try:
-        seed_tiffin_catalog(session)
-    finally:
-        session.close()
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Manage application startup and shutdown events.
-    """
-
     logger.info(
-        "application_startup_lifecycle_initialization",
-        extra={"event": "application_startup_lifecycle_initialization"},
+        "application_startup_begin",
+        extra={"event": "application_startup_begin"},
     )
 
+    logger.info(
+        "application_startup_configuration_validation_begin",
+        extra={"event": "application_startup_configuration_validation_begin"},
+    )
     _validate_startup_configuration()
-    initialize_database()
-    db_session_factory = build_session_factory()
-    _seed_demo_catalog(db_session_factory)
-
-    app.state.db_session_factory = db_session_factory
-
     logger.info(
-        "application_startup_database_ready",
-        extra={"event": "application_startup_database_ready"},
+        "application_startup_configuration_validation_complete",
+        extra={"event": "application_startup_configuration_validation_complete"},
     )
 
+    logger.info(
+        "application_startup_database_check_begin",
+        extra={"event": "application_startup_database_check_begin"},
+    )
+    check_database_connection()
+    session_factory = get_session_factory()
+    app.state.db_session_factory = session_factory
+    logger.info(
+        "application_startup_database_check_complete",
+        extra={"event": "application_startup_database_check_complete"},
+    )
+
+    logger.info(
+        "application_startup_service_construction_begin",
+        extra={"event": "application_startup_service_construction_begin"},
+    )
     knowledge_manager = KnowledgeManager()
-    knowledge_manager.initialize()
+    rag_chain = RAGChain(knowledge_manager=knowledge_manager)
+    chat_service = ChatService(rag_chain=rag_chain, session_factory=session_factory)
+
     app.state.knowledge_manager = knowledge_manager
-
-    logger.info(
-        "application_startup_knowledge_manager_ready",
-        extra={"event": "application_startup_knowledge_manager_ready"},
-    )
-
-    rag_chain = RAGChain(knowledge_manager)
-    chat_service = ChatService(rag_chain, session_factory=db_session_factory)
-
     app.state.rag_chain = rag_chain
     app.state.chat_service = chat_service
-
     logger.info(
-        "application_startup_chat_service_ready",
-        extra={"event": "application_startup_chat_service_ready"},
+        "application_startup_service_construction_complete",
+        extra={"event": "application_startup_service_construction_complete"},
     )
-
-    if getattr(settings, "TWILIO_SIGNATURE_VERIFICATION_ENABLED", True):
-        _get_twilio_request_validator()
 
     logger.info(
         "application_startup_completed",
         extra={"event": "application_startup_completed"},
     )
 
-    yield
-
-    logger.info(
-        "application_shutdown_completed",
-        extra={"event": "application_shutdown_completed"},
-    )
+    try:
+        yield
+    finally:
+        dispose_database_resources()
+        logger.info(
+            "application_shutdown_completed",
+            extra={"event": "application_shutdown_completed"},
+        )

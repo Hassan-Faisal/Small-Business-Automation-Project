@@ -4,7 +4,7 @@
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0001a_add_conversation_state_records"
+revision = "0001a_conversation_state"
 down_revision = "0001_initial_schema"
 branch_labels = None
 depends_on = None

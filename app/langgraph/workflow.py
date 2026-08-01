@@ -6,6 +6,7 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.core.logging import setup_logger
 from app.langgraph.memory import ConversationMemory
@@ -40,7 +41,13 @@ class OrderConversationWorkflow:
         self.rag_chain = rag_chain
         self.product_service = product_service
         self.order_service = order_service
-        self.memory = memory or ConversationMemory()
+        if memory is not None:
+            self.memory = memory
+        else:
+            session = getattr(product_service, "db", None)
+            if not isinstance(session, Session):
+                raise ValueError("ConversationMemory requires a SQLAlchemy session.")
+            self.memory = ConversationMemory(session)
         self.meal_service = meal_service
         self.graph = self._build_graph()
 

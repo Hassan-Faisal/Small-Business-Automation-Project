@@ -24,6 +24,8 @@ if settings.OPENAI_API_KEY:
     embeddings: Embeddings = OpenAIEmbeddings(
         model=settings.OPENAI_EMBEDDING_MODEL,
         api_key=settings.OPENAI_API_KEY,
+        max_retries=1,
+        request_timeout=10,
     )
 else:
     embeddings = _DeterministicEmbeddings()
