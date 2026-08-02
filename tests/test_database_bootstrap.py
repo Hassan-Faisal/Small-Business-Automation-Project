@@ -35,6 +35,7 @@ def test_alembic_upgrade_head_creates_all_tables(tmp_path) -> None:
         engine.dispose()
 
     assert tables == {
+        'admin_users',
         'conversation_state_records',
         'customer_subscriptions',
         'meal_offerings',

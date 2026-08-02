@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     TWILIO_AUTH_TOKEN: str = ""
     TWILIO_SIGNATURE_VERIFICATION_ENABLED: bool = True
     TWILIO_TRUST_FORWARDED_HEADERS: bool = False
+    ADMIN_AUTH_SECRET: str = ""
+    ADMIN_TOKEN_EXPIRE_MINUTES: int = 60
+    ADMIN_COOKIE_SECURE: bool = True
+    ADMIN_COOKIE_NAME: str = "tiffinai_admin"
+    ADMIN_COOKIE_SAMESITE: str = "lax"
 
     model_config = SettingsConfigDict(
         env_file=Path(__file__).resolve().parents[2] / ".env",
@@ -29,6 +34,20 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    @field_validator("ADMIN_TOKEN_EXPIRE_MINUTES")
+    @classmethod
+    def validate_admin_token_expiration(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("ADMIN_TOKEN_EXPIRE_MINUTES must be greater than zero.")
+        return value
+
+    @field_validator("ADMIN_COOKIE_SAMESITE")
+    @classmethod
+    def validate_admin_cookie_samesite(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"lax", "strict", "none"}:
+            raise ValueError("ADMIN_COOKIE_SAMESITE must be lax, strict, or none.")
+        return normalized
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
     def validate_database_url(cls, value: str | None) -> str:

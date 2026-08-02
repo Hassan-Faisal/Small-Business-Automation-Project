@@ -316,3 +316,23 @@ python scripts/smoke_tiffin_demo.py
 # License
 
 This project is intended for educational and portfolio purposes.
+## Admin owner authentication (Phase 1)
+
+Admin authentication uses an HttpOnly, signed cookie. Add these variables to `.env`; use a long random secret in production and never commit real values:
+
+```env
+ADMIN_AUTH_SECRET=replace-with-a-long-random-production-secret
+ADMIN_TOKEN_EXPIRE_MINUTES=60
+ADMIN_COOKIE_SECURE=true
+ADMIN_COOKIE_NAME=tiffinai_admin
+ADMIN_COOKIE_SAMESITE=lax
+```
+
+Apply the schema and create the first owner:
+
+```bash
+alembic upgrade head
+python -m app.commands.create_admin
+```
+
+For local HTTP development only, set `ADMIN_COOKIE_SECURE=false`; keep it `true` in production. Open `/docs` and use `POST /admin/auth/login`; Swagger will retain the authentication cookie for `/admin/auth/me` and `/admin/protected-check`. Use `POST /admin/auth/logout` to clear it. Passwords and authentication secrets must not appear in source control, logs, or documentation.
