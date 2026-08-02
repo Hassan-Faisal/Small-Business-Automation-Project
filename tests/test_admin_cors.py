@@ -14,7 +14,7 @@ def test_admin_frontend_origins_are_explicit_and_credentials_are_enabled() -> No
     assert cors.kwargs["allow_origins"] == ["http://localhost:5173", "http://127.0.0.1:5173"]
     assert cors.kwargs["allow_credentials"] is True
     assert "*" not in cors.kwargs["allow_origins"]
-    assert set(cors.kwargs["allow_methods"]) == {"GET", "POST", "OPTIONS"}
+    assert set(cors.kwargs["allow_methods"]) == {"GET", "POST", "PATCH", "DELETE", "OPTIONS"}
     assert set(cors.kwargs["allow_headers"]) == {"Accept", "Content-Type"}
 
 

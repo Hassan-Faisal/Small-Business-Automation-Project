@@ -390,3 +390,20 @@ npm test
 ## Frontend Deployment
 
 Build with `VITE_API_BASE_URL` set to the public FastAPI URL and publish `frontend/dist/` through a static host. Configure that exact HTTPS frontend origin in the backend `ADMIN_FRONTEND_ORIGINS`, then redeploy the API. The initial dashboard includes login, protected navigation, the dashboard summary, recent orders, logout, and placeholder pages only; order, menu, customer, subscription, analytics, and settings management are intentionally not implemented.
+
+---
+
+# Admin Menu Management API (Phase 3A)
+
+`MealOffering` remains the authoritative scheduled menu record: it controls the day, meal type, menu description, availability, and active state shown to customers. `Product` remains the globally named orderable record used by carts and `OrderItem.product_id`.
+
+The existing catalog associates these records by normalized name rather than a foreign key. Admin menu writes preserve that contract atomically:
+
+- creating a new offering creates or reuses a same-name `Product`;
+- a product name has one current orderable price, so explicit price changes update the product and all same-name scheduled offerings;
+- product availability is true while at least one same-name offering is active and available;
+- renaming an item with peer schedules or historical orders creates a new product instead of repurposing the old product;
+- deletion is a soft deactivation of the offering;
+- historical `OrderItem.unit_price`, `subtotal`, and `product_id` values are never modified.
+
+Protected endpoints are available under `/admin/menu-items`. List results are paginated with a maximum page size of 100. The React menu-management page is intentionally not implemented in this phase.
