@@ -302,7 +302,7 @@ python scripts/smoke_tiffin_demo.py
 
 # Future Improvements
 
-- Admin dashboard
+- Admin order, menu, customer, and subscription management
 - Payment gateway integration
 - Real-time delivery tracking
 - Voice message support
@@ -336,3 +336,57 @@ python -m app.commands.create_admin
 ```
 
 For local HTTP development only, set `ADMIN_COOKIE_SECURE=false`; keep it `true` in production. Open `/docs` and use `POST /admin/auth/login`; Swagger will retain the authentication cookie for `/admin/auth/me` and `/admin/protected-check`. Use `POST /admin/auth/logout` to clear it. Passwords and authentication secrets must not appear in source control, logs, or documentation.
+
+
+---
+
+# Admin Dashboard Frontend (Phase 2B)
+
+The owner dashboard is a separate React application in `frontend/`. It uses the FastAPI HttpOnly admin cookie and never reads or stores authentication tokens in JavaScript.
+
+## Frontend Setup
+
+```bash
+cd frontend
+cp .env.example .env
+npm install
+npm run dev
+```
+
+Set the backend URL in `frontend/.env`:
+
+```env
+VITE_API_BASE_URL=http://127.0.0.1:8000
+```
+
+Run FastAPI separately from the repository root:
+
+```bash
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Vite serves the dashboard at `http://localhost:5173`. Sign in at `/login`; authenticated owners are redirected to `/dashboard`. Session checks, dashboard requests, and logout include credentials so the browser can send the HttpOnly cookie. Refreshing a protected route restores the session through `GET /admin/auth/me`.
+
+## Admin CORS Configuration
+
+Configure exact frontend origins on the API. Wildcards are rejected because credentialed CORS requires explicit origins.
+
+```env
+ADMIN_FRONTEND_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+ADMIN_COOKIE_SECURE=false
+```
+
+Use `ADMIN_COOKIE_SECURE=false` only for local HTTP development. In production, use HTTPS, `ADMIN_COOKIE_SECURE=true`, and add the deployed frontend origin to `ADMIN_FRONTEND_ORIGINS`. If the frontend and API are on different sites, configure the existing cookie setting as `ADMIN_COOKIE_SAMESITE=none`; same-site deployments can retain `lax`.
+
+## Frontend Validation
+
+```bash
+cd frontend
+npm run build
+npm run lint
+npm test
+```
+
+## Frontend Deployment
+
+Build with `VITE_API_BASE_URL` set to the public FastAPI URL and publish `frontend/dist/` through a static host. Configure that exact HTTPS frontend origin in the backend `ADMIN_FRONTEND_ORIGINS`, then redeploy the API. The initial dashboard includes login, protected navigation, the dashboard summary, recent orders, logout, and placeholder pages only; order, menu, customer, subscription, analytics, and settings management are intentionally not implemented.

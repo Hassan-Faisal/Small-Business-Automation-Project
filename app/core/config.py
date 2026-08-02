@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     ADMIN_COOKIE_SECURE: bool = True
     ADMIN_COOKIE_NAME: str = "tiffinai_admin"
     ADMIN_COOKIE_SAMESITE: str = "lax"
+    BUSINESS_TIMEZONE: str = "Asia/Karachi"
+    ADMIN_FRONTEND_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     model_config = SettingsConfigDict(
         env_file=Path(__file__).resolve().parents[2] / ".env",
@@ -41,6 +43,14 @@ class Settings(BaseSettings):
             raise ValueError("ADMIN_TOKEN_EXPIRE_MINUTES must be greater than zero.")
         return value
 
+    @field_validator("ADMIN_FRONTEND_ORIGINS")
+    @classmethod
+    def validate_admin_frontend_origins(cls, value: str) -> str:
+        origins = [origin.strip() for origin in value.split(",") if origin.strip()]
+        if any("*" in origin for origin in origins):
+            raise ValueError("ADMIN_FRONTEND_ORIGINS must contain explicit origins, not '*'.")
+        return ",".join(origins)
+
     @field_validator("ADMIN_COOKIE_SAMESITE")
     @classmethod
     def validate_admin_cookie_samesite(cls, value: str) -> str:
@@ -48,6 +58,11 @@ class Settings(BaseSettings):
         if normalized not in {"lax", "strict", "none"}:
             raise ValueError("ADMIN_COOKIE_SAMESITE must be lax, strict, or none.")
         return normalized
+
+    @property
+    def admin_frontend_origins(self) -> list[str]:
+        return [origin.strip() for origin in self.ADMIN_FRONTEND_ORIGINS.split(",") if origin.strip()]
+
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
     def validate_database_url(cls, value: str | None) -> str:

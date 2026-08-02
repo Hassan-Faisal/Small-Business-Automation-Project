@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
@@ -101,6 +102,14 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
         },
     )
 
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.admin_frontend_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Accept", "Content-Type"],
+)
 
 app.add_middleware(RequestLoggingMiddleware)
 

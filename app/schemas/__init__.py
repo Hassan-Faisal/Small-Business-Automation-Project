@@ -1,4 +1,5 @@
 from app.schemas.admin import AdminAuthResponse, AdminLoginRequest, AdminMessageResponse, AdminProfileResponse
+from app.schemas.admin_dashboard import AdminDashboardSummaryResponse, RecentOrderResponse, TopSellingItemResponse
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.schemas.order import (
     OrderCreate,
@@ -14,6 +15,9 @@ __all__ = [
     "AdminProfileResponse",
     "AdminAuthResponse",
     "AdminMessageResponse",
+    "AdminDashboardSummaryResponse",
+    "RecentOrderResponse",
+    "TopSellingItemResponse",
     "ChatRequest",
     "ChatResponse",
     "ProductCreate",
