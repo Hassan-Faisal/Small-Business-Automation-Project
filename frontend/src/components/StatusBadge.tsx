@@ -1,5 +1,5 @@
 const labels: Record<string, string> = {
-  draft: "Pending",
+  draft: "Draft",
   pending: "Pending",
   confirmed: "Confirmed",
   preparing: "Preparing",

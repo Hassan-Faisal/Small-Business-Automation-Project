@@ -1,5 +1,7 @@
 import type { AdminProfile, AuthResponse } from "../types/admin";
 import type { DashboardSummary, RecentOrder, TopSellingItem } from "../types/dashboard";
+import type { MenuItem, MenuItemListResponse } from "../types/menu";
+import type { OrderDetail, OrderItemDetail, OrderListItem, OrderListResponse } from "../types/order";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -71,3 +73,100 @@ export function isDashboardSummary(value: unknown): value is DashboardSummary {
     && value.recent_orders.every(isRecentOrder)
   );
 }
+
+export function isMenuItem(value: unknown): value is MenuItem {
+  return (
+    isRecord(value)
+    && typeof value.id === "number"
+    && typeof value.name === "string"
+    && (value.description === null || typeof value.description === "string")
+    && isMoney(value.price)
+    && (value.meal_type === "breakfast" || value.meal_type === "lunch" || value.meal_type === "dinner")
+    && typeof value.day_of_week === "string"
+    && typeof value.availability === "boolean"
+    && typeof value.is_active === "boolean"
+  );
+}
+
+export function isMenuItemListResponse(value: unknown): value is MenuItemListResponse {
+  return (
+    isRecord(value)
+    && Array.isArray(value.items)
+    && value.items.every(isMenuItem)
+    && typeof value.total === "number"
+    && typeof value.page === "number"
+    && typeof value.page_size === "number"
+  );
+}
+
+export function isMenuItemDeactivationResponse(value: unknown): value is Pick<MenuItem, "id" | "availability" | "is_active"> & { message: string } {
+  return (
+    isRecord(value)
+    && typeof value.id === "number"
+    && typeof value.message === "string"
+    && typeof value.availability === "boolean"
+    && typeof value.is_active === "boolean"
+  );
+}
+
+function isTimestamp(value: unknown): value is string {
+  return typeof value === "string" && !Number.isNaN(Date.parse(value));
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+export function isOrderListItem(value: unknown): value is OrderListItem {
+  return isRecord(value)
+    && typeof value.id === "number"
+    && typeof value.order_number === "string"
+    && typeof value.customer_phone === "string"
+    && typeof value.status === "string"
+    && isMoney(value.total_amount)
+    && isTimestamp(value.created_at)
+    && isTimestamp(value.updated_at)
+    && typeof value.item_count === "number"
+    && (value.delivery_provider === null || typeof value.delivery_provider === "string");
+}
+
+export function isOrderListResponse(value: unknown): value is OrderListResponse {
+  return isRecord(value)
+    && Array.isArray(value.items)
+    && value.items.every(isOrderListItem)
+    && typeof value.page === "number"
+    && typeof value.page_size === "number"
+    && typeof value.total === "number"
+    && typeof value.pages === "number";
+}
+
+export function isOrderItemDetail(value: unknown): value is OrderItemDetail {
+  return isRecord(value)
+    && typeof value.product_name === "string"
+    && typeof value.quantity === "number"
+    && isMoney(value.unit_price)
+    && isMoney(value.subtotal);
+}
+
+export function isOrderDetail(value: unknown): value is OrderDetail {
+  return isRecord(value)
+    && typeof value.id === "number"
+    && typeof value.order_number === "string"
+    && typeof value.customer_phone === "string"
+    && typeof value.status === "string"
+    && isMoney(value.total_amount)
+    && typeof value.delivery_address === "string"
+    && isNullableString(value.customer_notes)
+    && isNullableString(value.internal_note)
+    && isTimestamp(value.created_at)
+    && isTimestamp(value.updated_at)
+    && (value.confirmed_at === null || isTimestamp(value.confirmed_at))
+    && (value.completed_at === null || isTimestamp(value.completed_at))
+    && (value.cancelled_at === null || isTimestamp(value.cancelled_at))
+    && (value.estimated_delivery_minutes === null || typeof value.estimated_delivery_minutes === "number")
+    && (value.delivery_provider === null || typeof value.delivery_provider === "string")
+    && (value.rider_note === null || typeof value.rider_note === "string")
+    && Array.isArray(value.items)
+    && value.items.every(isOrderItemDetail);
+}
+

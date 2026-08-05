@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
 
@@ -75,6 +76,7 @@ class OrderService:
             if not order.items:
                 raise ValueError("Cannot confirm an empty order.")
             order.status = "confirmed"
+            order.confirmed_at = datetime.now(timezone.utc)
             self.db.commit()
             return self.retrieve_order_by_order_number(order_number) or order
         except Exception:
@@ -91,6 +93,7 @@ class OrderService:
             if order.status == "completed":
                 raise ValueError(f"Order {order_number} has already been completed and cannot be cancelled.")
             order.status = "cancelled"
+            order.cancelled_at = datetime.now(timezone.utc)
             self.db.commit()
             return self.retrieve_order_by_order_number(order_number) or order
         except Exception:
@@ -114,3 +117,5 @@ class OrderService:
         except Exception:
             self.db.rollback()
             raise
+
+

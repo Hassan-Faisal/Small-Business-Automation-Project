@@ -25,7 +25,15 @@ class Order(Base):
     requested_delivery_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     number_of_boxes: Mapped[int | None] = mapped_column(nullable=True)
     special_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    internal_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    estimated_delivery_minutes: Mapped[int | None] = mapped_column(nullable=True)
+    delivery_provider: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    rider_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     items: Mapped[list["OrderItem"]] = relationship(back_populates="order", cascade="all, delete-orphan", passive_deletes=True)
+
