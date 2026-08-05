@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -17,6 +18,7 @@ class Settings(BaseSettings):
     WHATSAPP_PHONE_NUMBER_ID: str = ""
     WHATSAPP_API_VERSION: str = "v21.0"
     WHATSAPP_WEBHOOK_SECRET: str = ""
+    WHATSAPP_OUTBOUND_PROVIDER: Literal["twilio", "meta"] = "twilio"
     TWILIO_ACCOUNT_SID: str = ""
     TWILIO_WHATSAPP_NUMBER: str = ""
     TWILIO_AUTH_TOKEN: str = ""
@@ -83,3 +85,5 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+

@@ -10,6 +10,10 @@ from sqlalchemy.orm import Session, selectinload
 from app.models.admin_user import AdminUser
 from app.models.order import Order
 from app.models.order_item import OrderItem
+
+from app.schemas.order_notification import NotificationResult
+from app.services.order_notification_service import OrderNotificationService
+
 from app.schemas.admin_order import (
     AdminOrderDeliveryUpdate,
     AdminOrderDetailResponse,
@@ -51,8 +55,9 @@ class AdminOrderTransactionError(RuntimeError):
 
 
 class AdminOrderService:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, notification_service: OrderNotificationService | None = None) -> None:
         self.db = db
+        self.notification_service = notification_service or OrderNotificationService()
 
     @staticmethod
     def _bounds(date_from: date | None, date_to: date | None) -> tuple[datetime | None, datetime | None]:
@@ -109,10 +114,13 @@ class AdminOrderService:
             pages=(total + page_size - 1) // page_size,
         )
 
-    def _get_order(self, order_id: int) -> Order:
-        order = self.db.scalar(select(Order).where(Order.id == order_id).options(
+    def _get_order(self, order_id: int, *, for_update: bool = False) -> Order:
+        statement = select(Order).where(Order.id == order_id).options(
             selectinload(Order.items).selectinload(OrderItem.product)
-        ))
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        order = self.db.scalar(statement)
         if order is None:
             raise AdminOrderNotFoundError("Order not found.")
         return order
@@ -138,8 +146,22 @@ class AdminOrderService:
             ) for item in order.items],
         )
 
+    def _notify_status_safely(self, order: Order) -> NotificationResult:
+        try:
+            return self.notification_service.notify_status(order)
+        except Exception:
+            logger.exception("order_status_notification_failed", extra={"event": "order_status_notification_failed", "order_id": order.id, "order_number": order.order_number, "status": order.status})
+            return NotificationResult(status="failed", reason="notification_service_error")
+
+    def _notify_delivery_safely(self, order: Order) -> NotificationResult:
+        try:
+            return self.notification_service.notify_delivery_update(order)
+        except Exception:
+            logger.exception("order_delivery_notification_failed", extra={"event": "order_delivery_notification_failed", "order_id": order.id, "order_number": order.order_number, "status": order.status})
+            return NotificationResult(status="failed", reason="notification_service_error")
+
     def update_status(self, order_id: int, new_status: str, admin: AdminUser) -> AdminOrderDetailResponse:
-        order = self._get_order(order_id)
+        order = self._get_order(order_id, for_update=True)
         old_status = order.status
         if old_status in TERMINAL_STATUSES or new_status not in STATUS_TRANSITIONS.get(old_status, set()):
             raise AdminOrderInvalidTransitionError(f"Cannot transition order from {old_status} to {new_status}.")
@@ -161,10 +183,13 @@ class AdminOrderService:
             "event": "admin_order_status_changed", "order_id": order_id,
             "old_status": old_status, "new_status": new_status, "admin_id": admin.id,
         })
+        self._notify_status_safely(order)
         return self.get_detail(order_id)
 
     def update_delivery(self, order_id: int, payload: AdminOrderDeliveryUpdate, admin: AdminUser) -> AdminOrderDetailResponse:
-        order = self._get_order(order_id)
+        order = self._get_order(order_id, for_update=True)
+        old_eta = order.estimated_delivery_minutes
+        old_provider = order.delivery_provider
         for field in ("estimated_delivery_minutes", "delivery_provider", "rider_note", "internal_note"):
             value = getattr(payload, field)
             if value is not None:
@@ -178,6 +203,9 @@ class AdminOrderService:
         logger.info("admin_order_delivery_updated", extra={
             "event": "admin_order_delivery_updated", "order_id": order_id, "admin_id": admin.id,
         })
+        if order.status in {"rider_assigned", "out_for_delivery"} and (old_eta != order.estimated_delivery_minutes or old_provider != order.delivery_provider):
+            self._notify_delivery_safely(order)
         return self.get_detail(order_id)
+
 
 
