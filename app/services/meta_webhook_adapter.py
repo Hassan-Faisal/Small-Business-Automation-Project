@@ -24,14 +24,28 @@ class MetaInboundEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class MetaPayloadSummary:
+    entry_count: int = 0
+    change_count: int = 0
+    message_count: int = 0
+    status_count: int = 0
+    ignored_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class MetaWebhookResult:
     status: str
-    event: MetaInboundEvent | None = None
+    events: tuple[MetaInboundEvent, ...] = ()
+    summary: MetaPayloadSummary = MetaPayloadSummary()
     reason: str | None = None
+
+    @property
+    def event(self) -> MetaInboundEvent | None:
+        return self.events[0] if self.events else None
 
 
 class MetaWebhookAdapter:
-    """Parse and authenticate Meta webhooks without invoking application services."""
+    """Authenticate, summarize, and normalize Meta webhooks without chatbot calls."""
 
     def __init__(self) -> None:
         self._seen_message_ids: set[str] = set()
@@ -58,30 +72,52 @@ class MetaWebhookAdapter:
         if not isinstance(entries, list):
             return MetaWebhookResult(status="ignored", reason="malformed_payload")
 
+        events: list[MetaInboundEvent] = []
+        entry_count = len(entries)
+        change_count = 0
+        message_count = 0
+        status_count = 0
+        ignored_count = 0
+        duplicate_count = 0
+
         for entry in entries:
             if not isinstance(entry, Mapping):
+                ignored_count += 1
                 continue
             waba_id = self._text(entry.get("id"))
             changes = entry.get("changes")
             if not isinstance(changes, list):
+                ignored_count += 1
                 continue
+            change_count += len(changes)
             for change in changes:
                 if not isinstance(change, Mapping):
+                    ignored_count += 1
                     continue
+                field = self._text(change.get("field"))
                 value = change.get("value")
                 if not isinstance(value, Mapping):
+                    ignored_count += 1
+                    continue
+                statuses = value.get("statuses")
+                if isinstance(statuses, list):
+                    status_count += len(statuses)
+                if field not in (None, "messages"):
+                    ignored_count += 1
                     continue
                 metadata = value.get("metadata")
                 phone_number_id = self._text(metadata.get("phone_number_id")) if isinstance(metadata, Mapping) else None
                 messages = value.get("messages")
                 if not isinstance(messages, list):
                     continue
+                message_count += len(messages)
                 for message in messages:
                     if not isinstance(message, Mapping):
+                        ignored_count += 1
                         continue
                     message_type = self._text(message.get("type")) or "unknown"
                     if message_type != "text":
-                        logger.info("Ignored unsupported Meta WhatsApp message", extra={"message_type": message_type})
+                        ignored_count += 1
                         continue
                     text = message.get("text")
                     body = self._text(text.get("body")) if isinstance(text, Mapping) else None
@@ -89,14 +125,22 @@ class MetaWebhookAdapter:
                     message_id = self._text(message.get("id"))
                     timestamp = self._text(message.get("timestamp"))
                     if not body or not sender or not message_id or not timestamp:
+                        ignored_count += 1
                         continue
                     event = MetaInboundEvent(waba_id, phone_number_id, sender, message_id, timestamp, message_type, body)
                     if message_id in self._seen_message_ids:
-                        logger.info("Ignored duplicate Meta WhatsApp message", extra={"message_id": message_id, "message_type": message_type})
-                        return MetaWebhookResult(status="duplicate", event=event, reason="duplicate_message")
+                        duplicate_count += 1
+                        logger.info("meta_message_duplicate", extra={"event": "meta_message_duplicate", "message_id": message_id})
+                        continue
                     self._seen_message_ids.add(message_id)
-                    return MetaWebhookResult(status="received", event=event)
-        return MetaWebhookResult(status="ignored", reason="unsupported_or_malformed")
+                    events.append(event)
+
+        summary = MetaPayloadSummary(entry_count, change_count, message_count, status_count, ignored_count)
+        if events:
+            return MetaWebhookResult(status="received", events=tuple(events), summary=summary)
+        if duplicate_count:
+            return MetaWebhookResult(status="duplicate", summary=summary, reason="duplicate_message")
+        return MetaWebhookResult(status="ignored", summary=summary, reason="unsupported_or_malformed")
 
     @staticmethod
     def _text(value: Any) -> str | None:

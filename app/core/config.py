@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     META_TEST_RECIPIENT_PHONE: str = ""
     META_APP_SECRET: str = ""
     META_SIGNATURE_VERIFICATION_ENABLED: bool = True
+    META_WABA_ID: str = ""
+    META_WEBHOOK_PUBLIC_URL: str = ""
     WHATSAPP_WEBHOOK_SECRET: str = ""
     WHATSAPP_OUTBOUND_PROVIDER: Literal["twilio", "meta"] = "twilio"
     TWILIO_ACCOUNT_SID: str = ""
