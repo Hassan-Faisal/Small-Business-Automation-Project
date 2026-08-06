@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     WHATSAPP_PHONE_NUMBER_ID: str = ""
     WHATSAPP_API_VERSION: str = "v21.0"
     META_TEST_RECIPIENT_PHONE: str = ""
+    META_APP_SECRET: str = ""
+    META_SIGNATURE_VERIFICATION_ENABLED: bool = True
     WHATSAPP_WEBHOOK_SECRET: str = ""
     WHATSAPP_OUTBOUND_PROVIDER: Literal["twilio", "meta"] = "twilio"
     TWILIO_ACCOUNT_SID: str = ""
