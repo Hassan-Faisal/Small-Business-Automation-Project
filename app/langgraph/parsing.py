@@ -77,7 +77,7 @@ def extract_position_reference(text: str) -> int | None:
 
 
 def extract_order_reference(text: str) -> str | None:
-    match = re.search(r"\bORD-[A-Z0-9]+(?:-[A-Z0-9]+)*\b", text.upper())
+    match = re.search(r"\b(?:ORD|TF)-[A-Z0-9]+(?:-[A-Z0-9]+)*\b", text.upper())
     return match.group(0) if match else None
 
 
@@ -99,22 +99,24 @@ def infer_intent(text: str) -> str:
         return "skip_meal"
     if contains_any(normalized, {"bulk order", "large order", "boxes"}):
         return "bulk_order"
-    if contains_any(normalized, {"cancel my order", "cancel order", "i do not want this order"}):
+    if contains_any(normalized, {"cancel my order", "cancel order", "i do not want this order", "mujhay order cancel krna hai", "mera order cancel kro", "order cancel kar do"}):
         return "cancel_order"
-    if contains_any(normalized, {"track my order", "track order", "order status", "where is my order", "status of order"}) or (extract_order_reference(text) is not None and "cancel" not in normalized):
+    if contains_any(normalized, {"track my order", "track order", "order status", "where is my order", "status of order", "mera order kahan hai", "mera order track kro", "order ka status batao"}) or (extract_order_reference(text) is not None and "cancel" not in normalized):
         return "track_order"
-    if contains_any(normalized, {"my address is", "deliver to", "address:", "send to", "i live at", "location is"}):
+    if contains_any(normalized, {"my address is", "deliver to", "address:", "send to", "i live at", "location is", "delivery address", "ye address hai", "address hai", "address save kro"}):
         return "provide_address"
-    if contains_any(normalized, {"confirm order", "place order", "proceed", "place my order"}) or normalized in {"confirm", "yes"}:
+    if contains_any(normalized, {"confirm order", "place order", "proceed", "place my order", "order confirm kro"}) or normalized in {"confirm", "yes"}:
         return "confirm_order"
-    if contains_any(normalized, {"view cart", "show my cart", "what have i ordered", "show cart"}) or normalized == "cart":
+    if contains_any(normalized, {"view cart", "show my cart", "what's in my cart", "what have i ordered", "show cart", "meri cart mai kia hai", "cart dikhao", "mera cart", "cart check kro"}) or normalized == "cart":
         return "view_cart"
     if contains_any(normalized, {"remove", "delete", "take out"}):
         return "remove_item"
-    if contains_any(normalized, {"today's menu", "today menu", "what is available today", "what can i order today", "available today", "share menu", "menu please"}):
+    if contains_any(normalized, {"today's menu", "today menu", "show today's menu", "what is available today", "what can i order today", "available today", "share menu", "menu please", "aaj menu mai kia hai", "aaj ka menu", "what is in menu"}):
         return "today_menu"
-    if contains_any(normalized, {"weekly menu", "show weekly menu", "this week's meals", "weekly plan", "what is available this week", "show me the menu"}):
+    if contains_any(normalized, {"weekly menu", "show weekly menu", "this week's meals", "weekly plan", "what is available this week", "show me the menu", "is haftay ka menu"}):
         return "weekly_menu"
+    if extract_day(text) is not None and _phrase_in_text(normalized, "menu"):
+        return "today_menu"
     meal_type = extract_meal_type(normalized)
     if meal_type is not None and (_phrase_in_text(normalized, "menu") or normalized in {"breakfast", "lunch", "dinner", "nashta"} or contains_any(normalized, {"kya hai", "kia hai"}) or extract_day(text) is not None):
         return f"{meal_type}_menu"
@@ -124,7 +126,9 @@ def infer_intent(text: str) -> str:
         return "lunch_menu"
     if normalized in {"show dinner", "dinner menu", "what is for dinner"}:
         return "dinner_menu"
-    if contains_any(normalized, {"subscription plans", "show subscription plans", "show plans", "what subscriptions do you offer", "tiffin plans"}) or normalized == "subscribe":
+    if contains_any(normalized, {"subscription plans", "show subscription plans", "show subscriptions", "subscription options", "subscription options dikhao", "show plans", "what subscriptions do you offer", "tiffin plans"}) or normalized == "subscribe":
+        return "subscription_plans"
+    if contains_any(normalized, {"monthly plan", "weekly plan"}):
         return "subscription_plans"
     if (contains_any(normalized, {"weekly", "monthly"}) and _phrase_in_text(normalized, "plan")) or contains_any(normalized, {"start a", "select", "subscribe me"}) or bool(re.search(r"\bplan\s+\d+\b", normalized)):
         return "create_subscription"
@@ -140,6 +144,6 @@ def infer_intent(text: str) -> str:
         return "greeting"
     if _phrase_in_text(normalized, "menu"):
         return "weekly_menu"
-    if contains_any(normalized, {"add", "order", "i want", "need", "get me", "send me", "add item number"}):
+    if contains_any(normalized, {"add", "order", "i want", "need", "get me", "send me", "add item number", "cart mai add kro", "order krna hai", "order karna hai"}):
         return "add_item"
     return "fallback"

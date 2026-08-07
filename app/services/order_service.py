@@ -22,7 +22,13 @@ class OrderService:
         self.db = db
 
     def _generate_order_number(self) -> str:
-        return f"ORD-{uuid4().hex[:12].upper()}"
+        date_code = datetime.now(timezone.utc).strftime("%y%m%d")
+        for _ in range(100):
+            candidate = f"TF-{date_code}-{uuid4().hex[:4].upper()}"
+            exists = self.db.scalar(select(Order.id).where(Order.order_number == candidate))
+            if exists is None:
+                return candidate
+        raise RuntimeError("Unable to generate a unique customer order number.")
 
     def _load_order(self, order_number: str) -> Order | None:
         stmt = select(Order).where(Order.order_number == order_number).options(selectinload(Order.items).selectinload(OrderItem.product))

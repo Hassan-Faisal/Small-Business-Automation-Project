@@ -20,7 +20,7 @@ def test_chat_endpoint_uses_customer_phone_and_session(client):
     )
 
     assert response.status_code == 200
-    assert 'hello' in response.json()['response'].lower()
+    assert 'welcome to tiffinai' in response.json()['response'].lower()
 
     state = chat_service.workflow.memory.get('conv-api')
     assert state['customer_phone'] == '15551234567'

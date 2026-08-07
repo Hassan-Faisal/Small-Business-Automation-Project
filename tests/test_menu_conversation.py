@@ -199,4 +199,4 @@ def test_address_only_message_is_accepted_during_checkout(workflow) -> None:
     assert address_result['intent'] == 'provide_address'
     assert 'saved your delivery address' in address_result['response'].lower()
     assert 'placed successfully' in confirm_result['response'].lower()
-    assert 'order number:' in confirm_result['response'].lower()
+    assert 'order #:' in confirm_result['response'].lower()

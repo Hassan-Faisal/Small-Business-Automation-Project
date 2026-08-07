@@ -42,7 +42,7 @@ def test_greeting_menu_cart_order_and_tracking_flow(workflow, customer_phone, fa
 
     add_item = run_message(workflow, 'Add 2 Chicken Biryani', conversation_id='demo-4', customer_phone=customer_phone, message_id='m5')
     assert add_item['intent'] == 'add_item'
-    assert 'added 2 x chicken biryani' in add_item['response'].lower()
+    assert 'chicken biryani has been added to your cart' in add_item['response'].lower()
     assert add_item['cart'][0]['quantity'] == 2
 
     duplicate = run_message(workflow, 'Add 2 Chicken Biryani', conversation_id='demo-4', customer_phone=customer_phone, message_id='m5')
@@ -68,8 +68,8 @@ def test_greeting_menu_cart_order_and_tracking_flow(workflow, customer_phone, fa
     assert 'saved your delivery address' in address['response'].lower()
 
     confirmed = run_message(workflow, 'Confirm order', conversation_id='demo-4', customer_phone=customer_phone, message_id='m12')
-    assert 'order number:' in confirmed['response'].lower()
-    assert confirmed['order_number'].startswith('ORD-')
+    assert 'order #:' in confirmed['response'].lower()
+    assert confirmed['order_number'].startswith('TF-')
     assert confirmed['order_status'] == 'confirmed'
 
     tracked = run_message(workflow, 'Track my order', conversation_id='demo-4', customer_phone=customer_phone, message_id='m13')

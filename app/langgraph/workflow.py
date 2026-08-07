@@ -35,6 +35,7 @@ MEAL_TYPES = ("breakfast", "lunch", "dinner")
 DEFAULT_REPLY = "I can help with today's menu, your cart, orders, subscriptions, and delivery policies. Try 'today menu', 'view cart', or 'subscription plans'."
 POLICY_FALLBACK = "I could not find that information in the TiffinAI policy documents. Please contact support."
 MAX_MENU_REPLY_LENGTH = 1500
+WELCOME_MESSAGE = "Assalam o Alaikum! " + chr(0x1F44B) + " Welcome to TiffinAI.\n\nHungry? I'm here to make ordering easy.\n\nYou can type naturally, for example:\n- What's on today's menu?\n- Show me Friday's menu\n- I want to order Chicken Biryani\n- Show my cart\n- Track my order\n\nWhat would you like to eat today?"
 
 
 class OrderConversationWorkflow:
@@ -156,7 +157,7 @@ class OrderConversationWorkflow:
         return state
 
     def _greeting(self, state: ConversationState) -> ConversationState:
-        state["last_response"] = "Assalam o Alaikum! Hello and welcome to TiffinAI.\n\nI can help you:\n1. View today's or weekly menu\n2. Add meals to your cart\n3. Place or track an order\n4. View or manage subscriptions\n5. Ask about delivery, payment, or policies\n\nWhat would you like to do?"
+        state["last_response"] = WELCOME_MESSAGE
         return state
 
     @staticmethod
@@ -236,12 +237,12 @@ class OrderConversationWorkflow:
         updated_cart.append({"product_id": product.id, "name": product.name, "quantity": quantity, "unit_price": str(product.price), "subtotal": str(subtotal)})
         self.memory.save(conversation_id, cart=updated_cart, customer_phone=state.get("customer_phone"))
         state["cart"] = updated_cart
-        state["last_response"] = f"Added {quantity} x {product.name} to your cart.\nSubtotal: {self._price(subtotal)}\nType 'view cart' to review or 'confirm order' to continue."
+        state["last_response"] = f"Done! {product.name} has been added to your cart.\nSubtotal: {self._price(subtotal)}\n\nWant to add anything else?"
         return state
 
     def _cart_line(self, item: dict[str, object]) -> str:
         subtotal = Decimal(str(item.get("subtotal") or Decimal(str(item.get("unit_price", 0))) * int(item.get("quantity", 0))))
-        return f"- {int(item.get('quantity', 0))} x {item.get('name', 'Meal')} ({self._price(subtotal)})"
+        return f"{int(item.get('quantity', 0))} \u00D7 {item.get('name', 'Meal')} \u2014 {self._price(subtotal)}"
 
     def _view_cart(self, state: ConversationState) -> ConversationState:
         memory_state = self._load_context(str(state.get("conversation_id", "default")))
@@ -250,7 +251,7 @@ class OrderConversationWorkflow:
             state["cart"] = []
             state["last_response"] = "Your cart is empty. Type 'today menu' or 'weekly menu' to see available meals."
             return state
-        lines = ["Your cart:"]
+        lines = ["Your cart"]
         lines.extend(self._cart_line(item) for item in cart)
         lines.append("")
         lines.append(f"Total: {self._price(calculate_cart_total(cart))}")
@@ -334,10 +335,12 @@ class OrderConversationWorkflow:
         return state
 
     def _order_summary(self, order: Order) -> str:
-        lines = [f"Order number: {order.order_number}"]
-        lines.extend(f"- {item.quantity} x {item.product.name} ({self._price(item.subtotal)})" for item in order.items)
+        lines = [f"Order #: {order.order_number}"]
+        lines.extend(f"{item.quantity} {chr(0x00D7)} {item.product.name} {chr(0x2014)} {self._price(item.subtotal)}" for item in order.items)
         lines.append(f"Total: {self._price(order.total_amount)}")
-        lines.append(f"Status: {order.status}")
+        lines.append(f"Status: {order.status.title()}")
+        lines.append("")
+        lines.append("You can type 'track my order' anytime to check its status.")
         return "\n".join(lines)
 
     def _confirm_order(self, state: ConversationState) -> ConversationState:
@@ -385,7 +388,7 @@ class OrderConversationWorkflow:
         memory_state = self._load_context(conversation_id)
         order_number = extract_order_reference(str(state.get("last_user_message", ""))) or str(memory_state.get("order_number") or "")
         if not order_number:
-            state["last_response"] = "I do not have an order number to track yet. Please share the full order number, for example ORD-123ABC."
+            state["last_response"] = "I do not have an order number to track yet. Please share the full order number, for example TF-260807-1042."
             return state
         order = self.order_service.retrieve_order_by_order_number(order_number)
         if order is None:
