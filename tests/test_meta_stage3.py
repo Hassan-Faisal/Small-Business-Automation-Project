@@ -158,3 +158,22 @@ def test_no_automatic_twilio_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     assert response.status_code == 200
     assert chat.calls == []
     assert outbound.calls == []
+
+def test_104_character_menu_reply_uses_webhook_loop_and_sends() -> None:
+    chat = FakeChat(response="M" * 104)
+    outbound = FakeOutbound()
+    service = MetaMessageProcessingService(chat, provider(outbound))
+    event = __import__("app.services.meta_webhook_adapter", fromlist=["MetaInboundEvent"]).MetaInboundEvent(
+        whatsapp_business_account_id="waba-1",
+        sender_phone="923244248414",
+        message_id="wamid.menu-104",
+        timestamp="1710000000",
+        message_type="text",
+        text_body="today menu",
+        phone_number_id="phone-1",
+    )
+
+    asyncio.run(service.process(event))
+
+    assert len(outbound.calls) == 1
+    assert len(outbound.calls[0]["text"]) == 104

@@ -9,6 +9,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.logging import setup_logger
+from app.services.meta_graph_errors import classify_meta_failure, extract_meta_graph_error, redact_meta_error_details, safe_exception_details
 
 logger = setup_logger(__name__)
 DEFAULT_REPLY = "I can help with today's menu, your cart, orders, subscriptions, and delivery policies. Try 'today menu' or 'view cart'."
@@ -19,21 +20,53 @@ class WhatsAppOutboundService:
         self.client = client or httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0))
 
     async def send_text_message(self, recipient_phone: str, text: str) -> dict[str, Any]:
+        return await self._send_payload(recipient_phone, {"messaging_product": "whatsapp", "to": recipient_phone, "type": "text", "text": {"body": text}})
+
+    async def send_template_message(self, recipient_phone: str, template_name: str, language_code: str) -> dict[str, Any]:
+        return await self._send_payload(recipient_phone, {"messaging_product": "whatsapp", "to": recipient_phone, "type": "template", "template": {"name": template_name, "language": {"code": language_code}}})
+
+    async def _send_payload(self, recipient_phone: str, payload: dict[str, Any]) -> dict[str, Any]:
         access_token = getattr(settings, "WHATSAPP_ACCESS_TOKEN", None)
         phone_number_id = getattr(settings, "WHATSAPP_PHONE_NUMBER_ID", None)
         api_version = getattr(settings, "WHATSAPP_API_VERSION", "v20.0")
         if not access_token or not phone_number_id:
             return {"status": "skipped"}
+        reply_length = len(str(payload.get("text", {}).get("body", ""))) if isinstance(payload.get("text"), Mapping) else 0
+        log_context = {"event": "meta_outbound_request", "destination_phone_suffix": recipient_phone[-4:], "reply_length": reply_length, "http_status": None, "success": False, "provider_message_id": None, "error_type": None, "error_code": None, "error_error_subcode": None, "error_message": None, "error_data_details": None, "fbtrace_id": None, "exception_type": None, "exception_message": None, "safe_failure_category": None}
+        logger.info("meta_outbound_boundary_enter", extra={"event": "meta_outbound_boundary_enter", "destination_phone_suffix": recipient_phone[-4:], "reply_length": reply_length})
         try:
-            response = await self.client.post(f"https://graph.facebook.com/{api_version}/{phone_number_id}/messages", headers={"Authorization": f"Bearer {access_token}"}, json={"messaging_product": "whatsapp", "to": recipient_phone, "type": "text", "text": {"body": text}})
+            response = await self.client.post(f"https://graph.facebook.com/{api_version}/{phone_number_id}/messages", headers={"Authorization": f"Bearer {access_token}"}, json=payload)
             response.raise_for_status()
-            return {"status": "ok", "data": response.json()}
+            data = response.json()
+            messages = data.get("messages") if isinstance(data, Mapping) else None
+            provider_message_id = messages[0].get("id") if isinstance(messages, list) and messages and isinstance(messages[0], Mapping) else None
+            log_context.update({"http_status": response.status_code, "success": True, "provider_message_id": provider_message_id})
+            logger.info("meta_outbound_request", extra=log_context)
+            return {"status": "ok", "data": data}
         except httpx.TimeoutException as exc:
+            log_context["safe_failure_category"] = "transport_error"
+            logger.info("meta_outbound_request", extra=log_context)
             return {"status": "timeout", "detail": str(exc)}
         except httpx.HTTPStatusError as exc:
-            return {"status": "error", "status_code": exc.response.status_code, "detail": exc.response.text}
+            error_details = None
+            try:
+                error_details = extract_meta_graph_error(exc.response.json(), status_code=exc.response.status_code)
+            except (ValueError, TypeError):
+                pass
+            safe_details = redact_meta_error_details(error_details, (access_token, getattr(settings, "META_APP_SECRET", ""), getattr(settings, "WHATSAPP_VERIFY_TOKEN", "")))
+            log_context.update({"http_status": exc.response.status_code, "error_type": safe_details.get("type"), "error_code": safe_details.get("code"), "error_error_subcode": safe_details.get("error_subcode"), "error_message": safe_details.get("message"), "error_data_details": safe_details.get("error_data_details"), "fbtrace_id": safe_details.get("fbtrace_id"), "safe_failure_category": classify_meta_failure(error_details, status_code=exc.response.status_code)})
+            logger.info("meta_outbound_request", extra=log_context)
+            return {"status": "error", "status_code": exc.response.status_code, "detail": exc.response.text, "error_details": error_details}
         except httpx.HTTPError as exc:
-            return {"status": "error", "detail": str(exc)}
+            log_context["safe_failure_category"] = "transport_error"
+            logger.info("meta_outbound_request", extra=log_context)
+            return {"status": "error", "detail": str(exc), "transport_error": True}
+        except Exception as exc:
+            exception_details = safe_exception_details(exc, (access_token, getattr(settings, "META_APP_SECRET", ""), getattr(settings, "WHATSAPP_VERIFY_TOKEN", "")))
+            log_context.update(exception_details)
+            log_context["safe_failure_category"] = "transport_exception"
+            logger.exception("meta_outbound_request", extra=log_context)
+            return {"status": "error", "transport_error": True, **exception_details}
 
 
 class WhatsAppWebhookService:
@@ -117,7 +150,6 @@ class WhatsAppWebhookService:
                     if sender_phone and body and message_id:
                         return {"sender_phone": sender_phone, "body": body, "message_id": message_id, "timestamp": str(message.get("timestamp") or ""), "message_type": "text"}
         return None
-
     async def handle_normalized_message(self, *, sender_phone: str, body: str, message_id: str, message_type: str = "text", send_outbound: bool = True) -> dict[str, Any]:
         persistent_memory = getattr(getattr(self.chat_service, "workflow", None), "memory", None)
         if persistent_memory is not None and persistent_memory.has_processed_message(sender_phone, message_id):
