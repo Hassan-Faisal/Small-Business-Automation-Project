@@ -105,9 +105,9 @@ def infer_intent(text: str) -> str:
         return "track_order"
     if contains_any(normalized, {"my address is", "deliver to", "address:", "send to", "i live at", "location is", "delivery address", "ye address hai", "address hai", "address save kro"}):
         return "provide_address"
-    if contains_any(normalized, {"confirm order", "place order", "proceed", "place my order", "order confirm kro"}) or normalized in {"confirm", "yes"}:
+    if contains_any(normalized, {"confirm order", "order confirm", "confirm my order", "confirm the order", "place order", "place my order", "checkout", "proceed", "proceed with order", "mera order confirm karo", "mera order confirm kro", "order confirm karo", "order confirm kro", "mera order place karo"}) or normalized in {"confirm", "yes"}:
         return "confirm_order"
-    if contains_any(normalized, {"view cart", "show my cart", "what's in my cart", "what have i ordered", "show cart", "meri cart mai kia hai", "cart dikhao", "mera cart", "cart check kro"}) or normalized == "cart":
+    if contains_any(normalized, {"view cart", "show my cart", "what is in my cart", "what's in my cart", "what is in cart", "what have i ordered", "show cart", "my cart", "cart please", "cart dikhao", "mera cart dikhao", "meri cart dikhao", "cart mein kya hai", "cart me kya hai", "mere cart mein kya hai", "mera cart", "meri cart mai kia hai", "cart check kro"}) or normalized in {"cart", "my cart", "cart please"}:
         return "view_cart"
     if contains_any(normalized, {"remove", "delete", "take out"}):
         return "remove_item"

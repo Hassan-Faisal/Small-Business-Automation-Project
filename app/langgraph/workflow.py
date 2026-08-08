@@ -32,7 +32,7 @@ from app.services.tiffin_service import BULK_ORDER_THRESHOLD, SubscriptionServic
 
 logger = setup_logger(__name__)
 MEAL_TYPES = ("breakfast", "lunch", "dinner")
-DEFAULT_REPLY = "I can help with today's menu, your cart, orders, subscriptions, and delivery policies. Try 'today menu', 'view cart', or 'subscription plans'."
+DEFAULT_REPLY = "Sorry, I didn't quite understand that.\n\nYou can ask me to:\n- Show today's or weekly menu\n- Add a meal to your cart\n- Show your cart\n- Place or track an order\n\nTry something like 'show my cart' or 'today's menu'."
 POLICY_FALLBACK = "I could not find that information in the TiffinAI policy documents. Please contact support."
 MAX_MENU_REPLY_LENGTH = 1500
 WELCOME_MESSAGE = "Assalam o Alaikum! " + chr(0x1F44B) + " Welcome to TiffinAI.\n\nHungry? I'm here to make ordering easy.\n\nYou can type naturally, for example:\n- What's on today's menu?\n- Show me Friday's menu\n- I want to order Chicken Biryani\n- Show my cart\n- Track my order\n\nWhat would you like to eat today?"
@@ -616,5 +616,3 @@ class OrderConversationWorkflow:
         if message_id and not self.memory.has_processed_message(conversation_id, message_id):
             self.memory.mark_processed_message(conversation_id, message_id)
         return {"response": self._reply(result.get("last_response")), "intent": result.get("intent", "fallback"), "cart": result.get("cart", []), "address": result.get("address"), "order_number": result.get("order_number"), "order_status": result.get("order_status"), "messages": result.get("messages", []), "retrieved_context": result.get("retrieved_context", "")}
-
-

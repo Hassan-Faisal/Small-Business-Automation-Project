@@ -135,3 +135,59 @@ def test_all_requested_natural_language_variants() -> None:
     }
     for message, expected in cases.items():
         assert infer_intent(message) == expected, message
+def test_real_menu_cart_confirm_regression(workflow, customer_phone) -> None:
+    conversation_id = "real-cart-confirm-regression"
+
+    menu = asyncio.run(workflow.run("today's menu", conversation_id=conversation_id, customer_phone=customer_phone, message_id="real-1"))
+    assert menu["intent"] == "today_menu"
+    assert "Chicken Karahi" in menu["response"]
+
+    added = asyncio.run(workflow.run("I want to order chicken karahi", conversation_id=conversation_id, customer_phone=customer_phone, message_id="real-2"))
+    assert added["intent"] == "add_item"
+    assert any(item["name"] == "Chicken Karahi" for item in added["cart"])
+
+    cart = asyncio.run(workflow.run("what is in my cart?", conversation_id=conversation_id, customer_phone=customer_phone, message_id="real-3"))
+    assert cart["intent"] == "view_cart"
+    assert "Chicken Karahi" in cart["response"]
+    assert "1 " in cart["response"]
+    assert "Rs. 380.00" in cart["response"]
+
+    confirmation = asyncio.run(workflow.run("order confirm", conversation_id=conversation_id, customer_phone=customer_phone, message_id="real-4"))
+    assert confirmation["intent"] == "confirm_order"
+    assert "delivery address" in confirmation["response"].lower()
+    assert "meal in the menu" not in confirmation["response"].lower()
+
+    address = asyncio.run(workflow.run("My address is House 12, Main Road", conversation_id=conversation_id, customer_phone=customer_phone, message_id="real-5"))
+    assert address["intent"] == "provide_address"
+    placed = asyncio.run(workflow.run("order confirm", conversation_id=conversation_id, customer_phone=customer_phone, message_id="real-6"))
+    assert placed["intent"] == "confirm_order"
+    assert "order has been placed successfully" in placed["response"].lower()
+
+
+def test_command_precedence_does_not_turn_order_commands_into_meals() -> None:
+    assert infer_intent("I want to order Chicken Karahi") == "add_item"
+    assert infer_intent("order confirm") == "confirm_order"
+    assert infer_intent("track order TF-260808-AB12") == "track_order"
+    assert infer_intent("cancel order TF-260808-AB12") == "cancel_order"
+
+
+def test_generic_fallback_does_not_mention_subscriptions(workflow) -> None:
+    result = asyncio.run(workflow.run("something completely unrelated", conversation_id="fallback-copy"))
+    assert "didn't quite understand" in result["response"]
+    assert "subscriptions" not in result["response"].lower()
+def test_cart_and_confirmation_roman_urdu_variants() -> None:
+    cart_variants = [
+        "cart dikhao",
+        "mera cart dikhao",
+        "meri cart dikhao",
+        "cart mein kya hai",
+        "cart me kya hai",
+        "mere cart mein kya hai",
+    ]
+    confirm_variants = [
+        "mera order confirm karo",
+        "order confirm karo",
+        "mera order place karo",
+    ]
+    assert all(infer_intent(message) == "view_cart" for message in cart_variants)
+    assert all(infer_intent(message) == "confirm_order" for message in confirm_variants)
