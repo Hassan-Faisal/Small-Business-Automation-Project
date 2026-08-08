@@ -13,6 +13,8 @@ Intent = Literal[
     "dinner_menu",
     "add_item",
     "remove_item",
+    "change_quantity",
+    "clear_cart",
     "view_cart",
     "provide_address",
     "confirm_order",
@@ -54,3 +56,11 @@ class ConversationState(TypedDict, total=False):
     pending_subscription_plan: dict[str, object]
     pending_menu_option: dict[str, object]
     selected_menu_day: str
+    classified_item_name: str | None
+    classified_quantity: int | None
+    classified_day: str | None
+    classified_order_number: str | None
+    classified_address: str | None
+    intent_source: str
+    intent_confidence: float
+    clarification_response: str | None

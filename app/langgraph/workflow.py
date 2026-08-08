@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+import time
 from decimal import Decimal
 from typing import Any
 
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import setup_logger
 from app.langgraph.memory import ConversationMemory
+from app.langgraph.classifier import StructuredIntentClassifier
 from app.langgraph.parsing import (
     CANONICAL_INTENTS,
     extract_day,
@@ -39,7 +41,7 @@ WELCOME_MESSAGE = "Assalam o Alaikum! " + chr(0x1F44B) + " Welcome to TiffinAI.\
 
 
 class OrderConversationWorkflow:
-    def __init__(self, rag_chain: RAGChain, product_service: ProductService, order_service: OrderService, memory: ConversationMemory | None = None, meal_service: TiffinCatalogService | None = None) -> None:
+    def __init__(self, rag_chain: RAGChain, product_service: ProductService, order_service: OrderService, memory: ConversationMemory | None = None, meal_service: TiffinCatalogService | None = None, classifier: StructuredIntentClassifier | None = None) -> None:
         self.rag_chain = rag_chain
         self.product_service = product_service
         self.order_service = order_service
@@ -51,6 +53,7 @@ class OrderConversationWorkflow:
                 raise ValueError("ConversationMemory requires a SQLAlchemy session.")
             self.memory = ConversationMemory(session)
         self.meal_service = meal_service
+        self.classifier = classifier or StructuredIntentClassifier()
         self.graph = self._build_graph()
 
     def _load_context(self, conversation_id: str) -> dict[str, object]:
@@ -132,10 +135,12 @@ class OrderConversationWorkflow:
                     if str(option.get("day") or "").lower() == selected_day.lower():
                         return option
         return None
-    def _route_intent(self, state: ConversationState) -> ConversationState:
+    async def _route_intent(self, state: ConversationState) -> ConversationState:
         memory_state = self._load_context(str(state.get("conversation_id", "default")))
         message = str(state.get("last_user_message", ""))
         intent = infer_intent(message)
+        intent_source = "deterministic"
+        intent_confidence = 1.0 if intent != "fallback" else 0.0
         selected = self._resolve_context_option(memory_state, message)
         if selected is not None:
             context_type, _ = self._message_options(list(memory_state.get("messages", [])))
@@ -153,6 +158,26 @@ class OrderConversationWorkflow:
             has_subscription_context = bool(self._phone(state.get("customer_phone") or memory_state.get("customer_phone")))
             if has_checkout_context or has_subscription_context:
                 intent = "provide_address"
+        if intent == "fallback":
+            started = time.perf_counter()
+            classification = await self.classifier.classify(message)
+            if classification is not None and classification.confidence >= self.classifier.confidence_threshold:
+                intent_source = "llm_fallback"
+                intent_confidence = classification.confidence
+                intent = str(classification.intent)
+                state["classified_item_name"] = classification.item_name
+                state["classified_quantity"] = classification.quantity
+                state["classified_day"] = classification.day
+                state["classified_order_number"] = classification.order_number
+                state["classified_address"] = classification.address
+                if classification.multiple_intents:
+                    intent = "fallback"
+                    state["clarification_response"] = "I can help with one action at a time. Would you like to see the menu, or add an item first?"
+            logger.info("intent_classified", extra={"event": "intent_classified", "intent_source": intent_source, "predicted_intent": intent, "confidence": intent_confidence, "clarification_required": intent == "fallback", "classifier_latency_ms": round((time.perf_counter() - started) * 1000, 2)})
+        state["intent_source"] = intent_source
+        state["intent_confidence"] = intent_confidence
+        if intent_source == "deterministic":
+            logger.info("intent_classified", extra={"event": "intent_classified", "intent_source": "deterministic", "predicted_intent": intent, "confidence": intent_confidence, "clarification_required": False, "classifier_latency_ms": 0})
         state["intent"] = intent if intent in CANONICAL_INTENTS else "fallback"
         return state
 
@@ -201,12 +226,16 @@ class OrderConversationWorkflow:
         options = [{"label": day, "day": day} for day in WEEKDAYS]
         lines.extend(f"{index}. {day}" for index, day in enumerate(WEEKDAYS, start=1))
         return "\n".join(lines), options
-    def _resolve_products(self, message: str, pending_option: dict[str, Any] | None = None) -> list[Product]:
+    def _resolve_products(self, message: str, pending_option: dict[str, Any] | None = None, item_name: str | None = None) -> list[Product]:
         if pending_option and pending_option.get("name"):
             product = self.product_service.retrieve_product_by_normalized_name(str(pending_option["name"]))
             return [product] if product is not None else []
-        normalized = normalize_text(message)
-        matches = [product for product in self.product_service.list_available_products() if self.product_service.normalize_name(product.name) in normalized]
+        normalized = normalize_text(item_name or message)
+        available = self.product_service.list_available_products()
+        matches = [product for product in available if self.product_service.normalize_name(product.name) in normalized]
+        if not matches and item_name:
+            requested_words = set(normalized.split())
+            matches = [product for product in available if requested_words and requested_words.issubset(set(self.product_service.normalize_name(product.name).split()))]
         if matches:
             return matches
         exact = self.product_service.retrieve_product_by_normalized_name(message)
@@ -217,7 +246,7 @@ class OrderConversationWorkflow:
         memory_state = self._load_context(conversation_id)
         cart = list(memory_state.get("cart", []))
         pending_option = state.get("pending_menu_option") if isinstance(state.get("pending_menu_option"), dict) else None
-        matches = self._resolve_products(str(state.get("last_user_message", "")), pending_option)
+        matches = self._resolve_products(str(state.get("last_user_message", "")), pending_option, state.get("classified_item_name"))
         if not matches:
             state["cart"] = cart
             state["last_response"] = "I could not find that meal in the menu. Type 'today menu' or 'weekly menu' to see available meals."
@@ -227,17 +256,52 @@ class OrderConversationWorkflow:
             state["last_response"] = "I found more than one matching meal. Please reply with the exact meal name."
             return state
         product = matches[0]
-        quantity = extract_quantity(str(state.get("last_user_message", ""))) or 1
+        quantity = state.get("classified_quantity") or extract_quantity(str(state.get("last_user_message", ""))) or 1
         if quantity <= 0:
             state["cart"] = cart
             state["last_response"] = "Quantity must be greater than zero."
             return state
+        existing = next((item for item in cart if int(item.get("product_id", 0)) == product.id), None)
+        if existing is not None:
+            quantity += int(existing.get("quantity", 0))
         subtotal = product.price * quantity
         updated_cart = [item for item in cart if int(item.get("product_id", 0)) != product.id]
         updated_cart.append({"product_id": product.id, "name": product.name, "quantity": quantity, "unit_price": str(product.price), "subtotal": str(subtotal)})
         self.memory.save(conversation_id, cart=updated_cart, customer_phone=state.get("customer_phone"))
         state["cart"] = updated_cart
         state["last_response"] = f"Done! {product.name} has been added to your cart.\nSubtotal: {self._price(subtotal)}\n\nWant to add anything else?"
+        return state
+
+    def _clear_cart(self, state: ConversationState) -> ConversationState:
+        conversation_id = str(state.get("conversation_id", "default"))
+        self.memory.save(conversation_id, cart=[], customer_phone=state.get("customer_phone"))
+        state["cart"] = []
+        state["last_response"] = "Your cart has been cleared."
+        return state
+
+    def _change_quantity(self, state: ConversationState) -> ConversationState:
+        message = normalize_text(str(state.get("last_user_message", "")))
+        conversation_id = str(state.get("conversation_id", "default"))
+        memory_state = self._load_context(conversation_id)
+        cart = list(memory_state.get("cart", []))
+        if not cart:
+            state["last_response"] = "Your cart is empty."
+            return state
+        position = extract_position_reference(message)
+        target = cart[position - 1] if position and 0 < position <= len(cart) else cart[-1]
+        requested = extract_quantity(message)
+        if "decrease" in message or "remove one" in message:
+            requested = max(0, int(target.get("quantity", 1)) - (requested or 1))
+        elif "increase" in message or "add one more" in message or "again" in message:
+            requested = int(target.get("quantity", 1)) + (requested or 1)
+        if requested is None or requested <= 0:
+            state["last_response"] = "Please tell me the new quantity, for example 'make that 3'."
+            return state
+        target["quantity"] = requested
+        target["subtotal"] = str(Decimal(str(target.get("unit_price", 0))) * requested)
+        self.memory.save(conversation_id, cart=cart, customer_phone=state.get("customer_phone"))
+        state["cart"] = cart
+        state["last_response"] = f"Updated {target.get('name', 'meal')} to {requested}. Total: {self._price(calculate_cart_total(cart))}"
         return state
 
     def _cart_line(self, item: dict[str, object]) -> str:
@@ -386,11 +450,18 @@ class OrderConversationWorkflow:
     def _track_order(self, state: ConversationState) -> ConversationState:
         conversation_id = str(state.get("conversation_id", "default"))
         memory_state = self._load_context(conversation_id)
-        order_number = extract_order_reference(str(state.get("last_user_message", ""))) or str(memory_state.get("order_number") or "")
+        order_number = extract_order_reference(str(state.get("last_user_message", ""))) or str(state.get("classified_order_number") or memory_state.get("order_number") or "")
+        customer_phone = self._phone(state.get("customer_phone") or memory_state.get("customer_phone"))
+        if not order_number and customer_phone:
+            latest = self.order_service.retrieve_latest_order_for_customer(customer_phone)
+            if latest is not None:
+                order_number = latest.order_number
         if not order_number:
             state["last_response"] = "I do not have an order number to track yet. Please share the full order number, for example TF-260807-1042."
             return state
-        order = self.order_service.retrieve_order_by_order_number(order_number)
+        order = (self.order_service.retrieve_order_by_order_number(order_number, customer_phone=customer_phone) if customer_phone else None)
+        if order is None and not extract_order_reference(str(state.get("last_user_message", ""))) and customer_phone:
+            order = self.order_service.retrieve_latest_order_for_customer(customer_phone)
         if order is None:
             state["last_response"] = f"I could not find order {order_number}."
             return state
@@ -403,12 +474,15 @@ class OrderConversationWorkflow:
     def _cancel_order(self, state: ConversationState) -> ConversationState:
         conversation_id = str(state.get("conversation_id", "default"))
         memory_state = self._load_context(conversation_id)
-        order_number = extract_order_reference(str(state.get("last_user_message", ""))) or str(memory_state.get("order_number") or "")
+        order_number = extract_order_reference(str(state.get("last_user_message", ""))) or str(state.get("classified_order_number") or memory_state.get("order_number") or "")
         if not order_number:
             state["last_response"] = "Please share the order number you want to cancel."
             return state
         try:
-            order = self.order_service.cancel_order(order_number)
+            customer_phone = self._phone(state.get("customer_phone") or memory_state.get("customer_phone"))
+            if not customer_phone or self.order_service.retrieve_order_by_order_number(order_number, customer_phone=customer_phone) is None:
+                raise ValueError(f"Order {order_number} was not found.")
+            order = self.order_service.cancel_order_for_customer(order_number, customer_phone)
         except ValueError as exc:
             state["last_response"] = str(exc)
             return state
@@ -540,7 +614,7 @@ class OrderConversationWorkflow:
     async def _menu(self, state: ConversationState) -> ConversationState:
         message = str(state.get("last_user_message", ""))
         intent = str(state.get("intent") or "fallback")
-        day = str(state.get("selected_menu_day") or extract_day(message, base_date=date.today()) or date.today().strftime("%A"))
+        day = str(state.get("selected_menu_day") or state.get("classified_day") or extract_day(message, base_date=date.today()) or date.today().strftime("%A"))
         if intent == "today_menu":
             state["last_response"] = self._format_daily_menu(day)
         elif intent == "weekly_menu":
@@ -569,7 +643,7 @@ class OrderConversationWorkflow:
         return state
 
     def _fallback(self, state: ConversationState) -> ConversationState:
-        state["last_response"] = DEFAULT_REPLY
+        state["last_response"] = str(state.get("clarification_response") or DEFAULT_REPLY)
         return state
 
     def _compose_response(self, state: ConversationState) -> ConversationState:
@@ -589,6 +663,8 @@ class OrderConversationWorkflow:
         workflow.add_node("menu", self._menu)
         workflow.add_node("add_item", self._add_item)
         workflow.add_node("remove_item", self._remove_item)
+        workflow.add_node("change_quantity", self._change_quantity)
+        workflow.add_node("clear_cart", self._clear_cart)
         workflow.add_node("view_cart", self._view_cart)
         workflow.add_node("provide_address", self._capture_address)
         workflow.add_node("confirm_order", self._confirm_order)
@@ -601,8 +677,8 @@ class OrderConversationWorkflow:
         workflow.add_node("fallback", self._fallback)
         workflow.add_node("compose_response", self._compose_response)
         workflow.set_entry_point("route_intent")
-        workflow.add_conditional_edges("route_intent", lambda state: str(state.get("intent") or "fallback"), {"greeting": "greeting", "today_menu": "menu", "weekly_menu": "menu", "breakfast_menu": "menu", "lunch_menu": "menu", "dinner_menu": "menu", "add_item": "add_item", "remove_item": "remove_item", "view_cart": "view_cart", "provide_address": "provide_address", "confirm_order": "confirm_order", "track_order": "track_order", "cancel_order": "cancel_order", "subscription_plans": "subscription", "create_subscription": "subscription", "subscription_status": "subscription", "pause_subscription": "subscription", "resume_subscription": "subscription", "cancel_subscription": "subscription", "skip_meal": "subscription", "bulk_order": "subscription", "delivery_area": "rag", "delivery_timing": "rag", "payment_methods": "payment_methods", "faq": "rag", "human_handoff": "human_handoff", "fallback": "fallback"})
-        for node in ("greeting", "menu", "add_item", "remove_item", "view_cart", "provide_address", "confirm_order", "track_order", "cancel_order", "subscription", "rag", "payment_methods", "human_handoff", "fallback"):
+        workflow.add_conditional_edges("route_intent", lambda state: str(state.get("intent") or "fallback"), {"greeting": "greeting", "today_menu": "menu", "weekly_menu": "menu", "breakfast_menu": "menu", "lunch_menu": "menu", "dinner_menu": "menu", "add_item": "add_item", "remove_item": "remove_item", "change_quantity": "change_quantity", "clear_cart": "clear_cart", "view_cart": "view_cart", "provide_address": "provide_address", "confirm_order": "confirm_order", "track_order": "track_order", "cancel_order": "cancel_order", "subscription_plans": "subscription", "create_subscription": "subscription", "subscription_status": "subscription", "pause_subscription": "subscription", "resume_subscription": "subscription", "cancel_subscription": "subscription", "skip_meal": "subscription", "bulk_order": "subscription", "delivery_area": "rag", "delivery_timing": "rag", "payment_methods": "payment_methods", "faq": "rag", "human_handoff": "human_handoff", "fallback": "fallback"})
+        for node in ("greeting", "menu", "add_item", "remove_item", "change_quantity", "clear_cart", "view_cart", "provide_address", "confirm_order", "track_order", "cancel_order", "subscription", "rag", "payment_methods", "human_handoff", "fallback"):
             workflow.add_edge(node, "compose_response")
         workflow.add_edge("compose_response", END)
         return workflow.compile()

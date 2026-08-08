@@ -140,6 +140,8 @@ def test_every_canonical_intent_is_reachable_and_non_empty(workflow, customer_ph
         'dinner_menu': 'Dinner menu',
         'add_item': 'Add 1 Chicken Biryani',
         'remove_item': 'Remove Chicken Biryani',
+        'change_quantity': 'Make that 3',
+        'clear_cart': 'Clear my cart',
         'view_cart': 'View cart',
         'provide_address': 'I live at 12 Canal Road',
         'confirm_order': 'Confirm order',

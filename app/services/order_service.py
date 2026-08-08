@@ -30,8 +30,11 @@ class OrderService:
                 return candidate
         raise RuntimeError("Unable to generate a unique customer order number.")
 
-    def _load_order(self, order_number: str) -> Order | None:
-        stmt = select(Order).where(Order.order_number == order_number).options(selectinload(Order.items).selectinload(OrderItem.product))
+    def _load_order(self, order_number: str, customer_phone: str | None = None) -> Order | None:
+        conditions = [Order.order_number == order_number]
+        if customer_phone:
+            conditions.append(Order.customer_phone == customer_phone.strip())
+        stmt = select(Order).where(*conditions).options(selectinload(Order.items).selectinload(OrderItem.product))
         return self.db.scalars(stmt).first()
 
     def create_draft_order(self, payload: OrderCreate) -> Order:
@@ -96,7 +99,7 @@ class OrderService:
                 raise ValueError(f"Order {order_number} was not found.")
             if order.status == "cancelled":
                 raise ValueError(f"Order {order_number} is already cancelled.")
-            if order.status == "completed":
+            if order.status in {"out_for_delivery", "delivered", "completed"}:
                 raise ValueError(f"Order {order_number} has already been completed and cannot be cancelled.")
             order.status = "cancelled"
             order.cancelled_at = datetime.now(timezone.utc)
@@ -106,8 +109,19 @@ class OrderService:
             self.db.rollback()
             raise
 
-    def retrieve_order_by_order_number(self, order_number: str) -> Order | None:
-        return self._load_order(order_number)
+    def retrieve_order_by_order_number(self, order_number: str, customer_phone: str | None = None) -> Order | None:
+        return self._load_order(order_number, customer_phone)
+
+    def retrieve_latest_order_for_customer(self, customer_phone: str) -> Order | None:
+        stmt = (select(Order).where(Order.customer_phone == customer_phone.strip())
+                .order_by(Order.created_at.desc()).limit(1)
+                .options(selectinload(Order.items).selectinload(OrderItem.product)))
+        return self.db.scalars(stmt).first()
+
+    def cancel_order_for_customer(self, order_number: str, customer_phone: str) -> Order:
+        if self._load_order(order_number, customer_phone) is None:
+            raise ValueError(f"Order {order_number} was not found.")
+        return self.cancel_order(order_number)
 
     def update_order_status(self, order_number: str, status: str) -> Order:
         try:
@@ -123,5 +137,3 @@ class OrderService:
         except Exception:
             self.db.rollback()
             raise
-
-

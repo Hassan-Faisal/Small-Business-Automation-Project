@@ -4,7 +4,7 @@ import re
 from datetime import date, timedelta
 from typing import Iterable
 
-CANONICAL_INTENTS = ["greeting", "today_menu", "weekly_menu", "breakfast_menu", "lunch_menu", "dinner_menu", "add_item", "remove_item", "view_cart", "provide_address", "confirm_order", "track_order", "cancel_order", "subscription_plans", "create_subscription", "subscription_status", "pause_subscription", "resume_subscription", "cancel_subscription", "skip_meal", "bulk_order", "delivery_area", "delivery_timing", "payment_methods", "faq", "human_handoff", "fallback"]
+CANONICAL_INTENTS = ["greeting", "today_menu", "weekly_menu", "breakfast_menu", "lunch_menu", "dinner_menu", "add_item", "remove_item", "change_quantity", "clear_cart", "view_cart", "provide_address", "confirm_order", "track_order", "cancel_order", "subscription_plans", "create_subscription", "subscription_status", "pause_subscription", "resume_subscription", "cancel_subscription", "skip_meal", "bulk_order", "delivery_area", "delivery_timing", "payment_methods", "faq", "human_handoff", "fallback"]
 WEEKDAY_ALIASES = {"monday": {"monday", "mon", "peer", "pir", "somwar"}, "tuesday": {"tuesday", "tue", "mangal", "mangalwar"}, "wednesday": {"wednesday", "wed", "budh", "budhwar"}, "thursday": {"thursday", "thu", "jumeraat", "jumerat"}, "friday": {"friday", "fri", "jumma", "juma"}, "saturday": {"saturday", "sat", "hafta"}, "sunday": {"sunday", "sun", "itwar", "aitwar"}}
 RELATIVE_DAY_ALIASES = {"today": {"today", "aaj", "aj"}, "tomorrow": {"tomorrow", "kal"}, "day_after_tomorrow": {"day after tomorrow", "parson"}}
 MEAL_ALIASES = {"breakfast": {"breakfast", "nashta", "nashtay", "subah ka khana"}, "lunch": {"lunch", "dopahar", "dopehar"}, "dinner": {"dinner", "raat ka khana", "rat ka khana", "shaam ka khana"}}
@@ -13,7 +13,11 @@ POSITION_WORDS = {"first": 1, "second": 2, "third": 3, "last": -1}
 
 
 def normalize_text(text: str) -> str:
-    return " ".join(text.strip().lower().split())
+    normalized = " ".join(text.strip().lower().split())
+    replacements = {"mujhay": "mujhe", "mjhe": "mujhe", "mujhko": "mujhe", "chaheye": "chahiye", "chahye": "chahiye", "krdo": "kar do", "karo": "kar do", "kia": "kya", "mai": "mein"}
+    for source, target in replacements.items():
+        normalized = re.sub(rf"(?<!\w){re.escape(source)}(?!\w)", target, normalized)
+    return normalized
 
 
 def _phrase_in_text(text: str, phrase: str) -> bool:
@@ -99,18 +103,26 @@ def infer_intent(text: str) -> str:
         return "skip_meal"
     if contains_any(normalized, {"bulk order", "large order", "boxes"}):
         return "bulk_order"
-    if contains_any(normalized, {"cancel my order", "cancel order", "i do not want this order", "mujhay order cancel krna hai", "mera order cancel kro", "order cancel kar do"}):
+    if contains_any(normalized, {"cancel my order", "cancel order", "i do not want this order", "mujhay order cancel krna hai", "mujhe order cancel kar do", "mujhe order cancel krna hai", "mera order cancel kar do", "mera order cancel kro", "order cancel kar do"}):
         return "cancel_order"
     if contains_any(normalized, {"track my order", "track order", "order status", "where is my order", "status of order", "mera order kahan hai", "mera order track kro", "order ka status batao"}) or (extract_order_reference(text) is not None and "cancel" not in normalized):
         return "track_order"
     if contains_any(normalized, {"my address is", "deliver to", "address:", "send to", "i live at", "location is", "delivery address", "ye address hai", "address hai", "address save kro"}):
         return "provide_address"
-    if contains_any(normalized, {"confirm order", "order confirm", "confirm my order", "confirm the order", "place order", "place my order", "checkout", "proceed", "proceed with order", "mera order confirm karo", "mera order confirm kro", "order confirm karo", "order confirm kro", "mera order place karo"}) or normalized in {"confirm", "yes"}:
+    if contains_any(normalized, {"confirm order", "order confirm", "confirm my order", "confirm the order", "place order", "place my order", "checkout", "proceed", "proceed with order", "mera order confirm kar do", "mera order confirm karo", "mera order confirm kro", "order confirm kar do", "order confirm karo", "order confirm kro", "mera order place kar do", "mera order place karo"}) or normalized in {"confirm", "yes"}:
         return "confirm_order"
+    if contains_any(normalized, {"clear cart", "clear my cart", "empty cart", "empty my cart", "delete my cart", "cart clear", "cart khali"}):
+        return "clear_cart"
     if contains_any(normalized, {"view cart", "show my cart", "what is in my cart", "what's in my cart", "what is in cart", "what have i ordered", "show cart", "my cart", "cart please", "cart dikhao", "mera cart dikhao", "meri cart dikhao", "cart mein kya hai", "cart me kya hai", "mere cart mein kya hai", "mera cart", "meri cart mai kia hai", "cart check kro"}) or normalized in {"cart", "my cart", "cart please"}:
         return "view_cart"
     if contains_any(normalized, {"remove", "delete", "take out"}):
         return "remove_item"
+    if contains_any(normalized, {"clear cart", "clear my cart", "empty cart", "empty my cart", "delete my cart", "cart clear", "cart khali"}):
+        return "clear_cart"
+    if contains_any(normalized, {"make that", "change quantity", "increase", "decrease", "add one more", "same one again"}):
+        return "change_quantity"
+    if contains_any(normalized, {"add", "order", "i want", "need", "get me", "send me", "chahiye", "cart mein add", "order kar do"}) and not contains_any(normalized, {"cancel", "confirm", "subscription", "plan"}):
+        return "add_item"
     if contains_any(normalized, {"today's menu", "today menu", "show today's menu", "what is available today", "what can i order today", "available today", "share menu", "menu please", "aaj menu mai kia hai", "aaj ka menu", "what is in menu"}):
         return "today_menu"
     if contains_any(normalized, {"weekly menu", "show weekly menu", "this week's meals", "weekly plan", "what is available this week", "show me the menu", "is haftay ka menu"}):
@@ -144,6 +156,6 @@ def infer_intent(text: str) -> str:
         return "greeting"
     if _phrase_in_text(normalized, "menu"):
         return "weekly_menu"
-    if contains_any(normalized, {"add", "order", "i want", "need", "get me", "send me", "add item number", "cart mai add kro", "order krna hai", "order karna hai"}):
+    if contains_any(normalized, {"add", "order", "i want", "need", "get me", "send me", "add item number", "cart mai add kro", "order krna hai", "order karna hai", "chahiye"}):
         return "add_item"
     return "fallback"

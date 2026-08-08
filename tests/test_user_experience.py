@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import re
+from datetime import date
 from decimal import Decimal
 
 from app.langgraph.parsing import extract_order_reference, infer_intent
+import app.langgraph.workflow as workflow_module
 from app.langgraph.workflow import WELCOME_MESSAGE
 from app.models.order import Order
 from app.services.order_service import OrderService
@@ -135,7 +137,13 @@ def test_all_requested_natural_language_variants() -> None:
     }
     for message, expected in cases.items():
         assert infer_intent(message) == expected, message
-def test_real_menu_cart_confirm_regression(workflow, customer_phone) -> None:
+def test_real_menu_cart_confirm_regression(workflow, customer_phone, monkeypatch) -> None:
+    class FixedDate(date):
+        @classmethod
+        def today(cls) -> date:
+            return cls(2026, 8, 7)
+
+    monkeypatch.setattr(workflow_module, "date", FixedDate)
     conversation_id = "real-cart-confirm-regression"
 
     menu = asyncio.run(workflow.run("today's menu", conversation_id=conversation_id, customer_phone=customer_phone, message_id="real-1"))
