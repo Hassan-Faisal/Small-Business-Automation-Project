@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from app.langgraph.classifier import IntentClassification, StructuredIntentClassifier
+from app.langgraph.parsing import extract_quantity
 from app.core.config import settings
 import app.langgraph.workflow as workflow_module
 
@@ -438,3 +439,33 @@ def test_modify_non_cancellable_placed_order_does_not_offer_cancellation(workflo
     assert result["intent"] == "modify_order"
     assert "cannot edit" in result["response"].lower()
     assert "cannot cancel" in result["response"].lower()
+
+
+def test_quantity_extractor_ignores_currency_associated_numbers() -> None:
+    cases = {
+        "Chicken Karahi Rs. 100 mein add kar do": None,
+        "Rs 100 Chicken Karahi add kar do": None,
+        "Chicken Karahi PKR 999999 add kar do": None,
+        "Chicken Karahi for 100 rupees add kar do": None,
+        "2 Chicken Karahi Rs. 100 mein add kar do": 2,
+        "mujhe do Chicken Karahi Rs 100 mein chahiye": 2,
+        "3 Chicken Karahi PKR 1,000 add karo": 3,
+    }
+    for message, expected in cases.items():
+        assert extract_quantity(message) == expected, message
+
+
+def test_monetary_add_request_defaults_to_one_and_uses_catalog_price(workflow, customer_phone) -> None:
+    messages = [
+        "mujhe Chicken Karahi Rs. 100 mein add kar do",
+        "Rs 999999 Chicken Karahi add kar do",
+        "Chicken Karahi PKR 100 add kar do",
+        "Chicken Karahi for 100 rupees add kar do",
+        "mujhe do Chicken Karahi Rs 100 mein chahiye",
+    ]
+    for index, message in enumerate(messages):
+        result = run(workflow, message, f"money-add-{index}", customer_phone)
+        item = result["cart"][0]
+        assert item["quantity"] == (2 if index == 4 else 1)
+        assert Decimal(item["unit_price"]) == Decimal("380.00")
+        assert Decimal(item["subtotal"]) == Decimal("760.00") if index == 4 else Decimal("380.00")

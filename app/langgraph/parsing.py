@@ -60,13 +60,27 @@ def extract_meal_type(text: str) -> str | None:
     return None
 
 
+CURRENCY_MARKER_PATTERN = r"(?:rs\.?|pkr|rupees?|rup(?:ee|ay|aye)s?|\u20a8)"
+MONEY_WORD_PATTERN = r"(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|ek|aik|do|teen|char|chaar|paanch|che|saat|aath|nau|das)(?:\s+hundred)?"
+
+def _monetary_spans(text: str) -> list[tuple[int, int]]:
+    amount_pattern = rf"(?:\d[\d,]*(?:\.\d+)?|{MONEY_WORD_PATTERN})"
+    patterns = (rf"{CURRENCY_MARKER_PATTERN}\s*{amount_pattern}", rf"{amount_pattern}\s*{CURRENCY_MARKER_PATTERN}")
+    return [(match.start(), match.end()) for pattern in patterns for match in re.finditer(pattern, text)]
+
 def extract_quantity(text: str) -> int | None:
     normalized = normalize_text(text)
-    match = re.search(r"(?<!\d)(-?\d+)(?!\d)", normalized)
-    if match is not None:
-        return int(match.group(1))
+    monetary_spans = _monetary_spans(normalized)
+    for match in re.finditer(r"(?<!\d)-?\d+(?!\d)", normalized):
+        if any(start <= match.start() and match.end() <= end for start, end in monetary_spans):
+            continue
+        return int(match.group(0))
     for word, value in NUMBER_WORDS.items():
-        if _phrase_in_text(normalized, word):
+        for word_match in re.finditer(rf"(?<!\w){re.escape(word)}(?!\w)", normalized):
+            if any(start <= word_match.start() and word_match.end() <= end for start, end in monetary_spans):
+                continue
+            if word == "do" and re.search(r"(?:kar|karo|kr)\s*$", normalized[:word_match.start()]):
+                continue
             return value
     return None
 
