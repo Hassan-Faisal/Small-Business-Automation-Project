@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from app.langgraph.classifier import IntentClassification, StructuredIntentClassifier
+from app.core.config import settings
 import app.langgraph.workflow as workflow_module
 
 
@@ -366,3 +368,73 @@ def test_remove_without_explicit_quantity_removes_entire_line(workflow, customer
     run(workflow, "Add 2 Chicken Biryani", "remove-line", customer_phone)
     result = run(workflow, "remove Chicken Biryani", "remove-line", customer_phone)
     assert result["cart"] == []
+
+
+def test_add_item_explicit_message_quantity_overrides_classifier_quantity(workflow, customer_phone) -> None:
+    stub = install_classifier(workflow, IntentClassification(
+        intent="add_item", item_name="qormay", quantity=1, confidence=0.95,
+    ))
+    result = run(workflow, "do qormay bhi kr dain", "add-quantity-roman", customer_phone)
+    assert stub.calls == 1
+    assert [(item["name"], item["quantity"]) for item in result["cart"]] == [("Chicken Qorma", 2)]
+
+
+def test_numeric_and_number_word_add_quantities(workflow, customer_phone) -> None:
+    numeric = run(workflow, "3 Chicken Qorma add karo", "add-quantity-numeric", customer_phone)
+    assert numeric["cart"][0]["quantity"] == 3
+    word = run(workflow, "mujhe do Chicken Qorma chahiye", "add-quantity-word", customer_phone)
+    assert word["cart"][0]["quantity"] == 2
+
+
+def test_recent_cart_survives_greeting(workflow, customer_phone, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "CART_INACTIVITY_MINUTES", 1440)
+    run(workflow, "Add 1 Chicken Biryani", "recent-cart", customer_phone)
+    result = run(workflow, "Salam", "recent-cart", customer_phone)
+    assert result["cart"][0]["name"] == "Chicken Biryani"
+
+
+def test_expired_cart_is_cleared_without_touching_state_history(workflow, customer_phone, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "CART_INACTIVITY_MINUTES", 60)
+    run(workflow, "Add 1 Chicken Biryani", "expired-cart", customer_phone)
+    record = workflow.memory._load_record("expired-cart")
+    assert record is not None
+    record.updated_at = datetime.now(timezone.utc) - timedelta(hours=3)
+    workflow.product_service.db.commit()
+    result = run(workflow, "Salam", "expired-cart", customer_phone)
+    assert result["cart"] == []
+
+
+def test_placed_order_survives_cart_expiry_and_supports_tracking(workflow, customer_phone, monkeypatch) -> None:
+    run(workflow, "Add 1 Chicken Biryani", "placed-history", customer_phone)
+    run(workflow, "House 12, Street 4, Islamabad", "placed-history", customer_phone)
+    placed = run(workflow, "Confirm order", "placed-history", customer_phone)
+    order_number = placed["order_number"]
+    record = workflow.memory._load_record("placed-history")
+    assert record is not None
+    record.updated_at = datetime.now(timezone.utc) - timedelta(hours=3)
+    workflow.product_service.db.commit()
+    tracked = run(workflow, "Track my order", "placed-history", customer_phone)
+    assert tracked["order_number"] == order_number
+    assert tracked["cart"] == []
+
+
+def test_modify_placed_order_returns_safe_customer_owned_guidance(workflow, customer_phone) -> None:
+    run(workflow, "Add 1 Chicken Biryani", "modify-placed", customer_phone)
+    run(workflow, "House 12, Street 4, Islamabad", "modify-placed", customer_phone)
+    placed = run(workflow, "Confirm order", "modify-placed", customer_phone)
+    result = run(workflow, "mujhay kuch change krna hai order mai", "modify-placed", customer_phone)
+    assert result["intent"] == "modify_order"
+    assert placed["order_number"] in result["response"]
+    assert "cannot edit" in result["response"].lower()
+    assert "cancel" in result["response"].lower()
+
+
+def test_modify_non_cancellable_placed_order_does_not_offer_cancellation(workflow, customer_phone) -> None:
+    run(workflow, "Add 1 Chicken Biryani", "modify-terminal", customer_phone)
+    run(workflow, "House 12, Street 4, Islamabad", "modify-terminal", customer_phone)
+    placed = run(workflow, "Confirm order", "modify-terminal", customer_phone)
+    workflow.order_service.update_order_status(placed["order_number"], "completed")
+    result = run(workflow, "change my order", "modify-terminal", customer_phone)
+    assert result["intent"] == "modify_order"
+    assert "cannot edit" in result["response"].lower()
+    assert "cannot cancel" in result["response"].lower()

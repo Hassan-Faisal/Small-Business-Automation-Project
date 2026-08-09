@@ -9,6 +9,7 @@ from langgraph.graph import END, StateGraph
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.logging import setup_logger
 from app.langgraph.memory import ConversationMemory
 from app.langgraph.classifier import StructuredIntentClassifier
@@ -136,22 +137,33 @@ class OrderConversationWorkflow:
                         return option
         return None
 
-    def _should_defer_active_cart_semantics(self, intent: str, message: str, memory_state: dict[str, object]) -> bool:
-        """Let the semantic classifier arbitrate broad order language over an active cart."""
-        if intent != "add_item" or not list(memory_state.get("cart", [])):
+    def _should_defer_active_cart_semantics(
+        self,
+        intent: str,
+        message: str,
+        memory_state: dict[str, object],
+        customer_phone: str | None,
+    ) -> bool:
+        """Let structured semantics arbitrate broad order language over known state."""
+        if intent != "add_item" or extract_order_reference(message) is not None:
             return False
-        if extract_order_reference(message) is not None:
+        has_active_cart = bool(list(memory_state.get("cart", [])))
+        has_recent_order = False
+        phone = self._phone(customer_phone or memory_state.get("customer_phone"))
+        if not has_active_cart and phone:
+            has_recent_order = self.order_service.retrieve_latest_order_for_customer(phone) is not None
+        if not has_active_cart and not has_recent_order:
             return False
         # A resolvable product is strong evidence for a real add request. If the
         # broad parser only saw "order" but no product exists in the message,
-        # defer to the classifier for cart-summary or checkout semantics.
+        # defer to cart-summary, checkout, or modify-order semantics.
         return not bool(self._resolve_products(message))
 
     async def _route_intent(self, state: ConversationState) -> ConversationState:
         memory_state = self._load_context(str(state.get("conversation_id", "default")))
         message = str(state.get("last_user_message", ""))
         intent = infer_intent(message)
-        if self._should_defer_active_cart_semantics(intent, message, memory_state):
+        if self._should_defer_active_cart_semantics(intent, message, memory_state, str(state.get("customer_phone") or "")):
             intent = "fallback"
         intent_source = "deterministic" if intent != "fallback" else "fallback"
         intent_confidence = 1.0 if intent != "fallback" else 0.0
@@ -283,7 +295,8 @@ class OrderConversationWorkflow:
             state["last_response"] = "I found more than one matching meal. Please reply with the exact meal name."
             return state
         product = matches[0]
-        quantity = state.get("classified_quantity") or extract_quantity(str(state.get("last_user_message", ""))) or 1
+        message_quantity = extract_quantity(str(state.get("last_user_message", "")))
+        quantity = message_quantity if message_quantity is not None else (state.get("classified_quantity") or 1)
         if quantity <= 0:
             state["cart"] = cart
             state["last_response"] = "Quantity must be greater than zero."
@@ -341,7 +354,8 @@ class OrderConversationWorkflow:
                 state["last_response"] = "Which cart item should I update?"
                 return state
 
-        requested = state.get("classified_quantity") or extract_quantity(message)
+        message_quantity = extract_quantity(message)
+        requested = message_quantity if message_quantity is not None else state.get("classified_quantity")
         operation = str(state.get("cart_operation") or "")
         if not operation:
             operation = "increment" if ("add one more" in message or "again" in message) else "decrement" if "decrease" in message else "set"
@@ -440,7 +454,7 @@ class OrderConversationWorkflow:
         operation = str(state.get("cart_operation") or "remove")
         if requested_from_message is not None and operation in {"", "remove"}:
             operation = "decrement"
-        requested = state.get("classified_quantity") or requested_from_message or 1
+        requested = requested_from_message if requested_from_message is not None else (state.get("classified_quantity") or 1)
         current_quantity = int(target.get("quantity", 0))
         if operation == "decrement":
             new_quantity = current_quantity - requested
@@ -537,6 +551,30 @@ class OrderConversationWorkflow:
         state["order_number"] = confirmed.order_number
         state["order_status"] = confirmed.status
         state["last_response"] = "Your order has been placed successfully.\n" + self._order_summary(confirmed)
+        return state
+
+    def _modify_order(self, state: ConversationState) -> ConversationState:
+        """Explain safe replacement of an already-placed customer order."""
+        conversation_id = str(state.get("conversation_id", "default"))
+        memory_state = self._load_context(conversation_id)
+        customer_phone = self._phone(state.get("customer_phone") or memory_state.get("customer_phone"))
+        order = None
+        remembered_number = str(memory_state.get("order_number") or "").strip()
+        if customer_phone and remembered_number:
+            order = self.order_service.retrieve_order_by_order_number(remembered_number, customer_phone=customer_phone)
+        if order is None and customer_phone:
+            order = self.order_service.retrieve_latest_order_for_customer(customer_phone)
+        if order is None:
+            state["last_response"] = "I could not find a recent customer order to modify. Please share the order number if you need help."
+            return state
+        non_cancellable = {"cancelled", "out_for_delivery", "delivered", "completed"}
+        status_text = order.status.replace("_", " ")
+        if order.status in non_cancellable:
+            state["last_response"] = f"Your order {order.order_number} has already been placed with status {status_text}. I cannot edit its items. I cannot cancel this order now."
+        else:
+            state["last_response"] = f"Your order {order.order_number} has already been placed. I cannot edit its items directly. If it is still eligible for cancellation, I can cancel it so you can place a new one."
+        state["order_number"] = order.order_number
+        state["order_status"] = order.status
         return state
 
     def _track_order(self, state: ConversationState) -> ConversationState:
@@ -762,6 +800,7 @@ class OrderConversationWorkflow:
         workflow.add_node("confirm_order", self._confirm_order)
         workflow.add_node("track_order", self._track_order)
         workflow.add_node("cancel_order", self._cancel_order)
+        workflow.add_node("modify_order", self._modify_order)
         workflow.add_node("subscription", self._subscription)
         workflow.add_node("rag", self._rag)
         workflow.add_node("payment_methods", self._payment_methods)
@@ -769,13 +808,17 @@ class OrderConversationWorkflow:
         workflow.add_node("fallback", self._fallback)
         workflow.add_node("compose_response", self._compose_response)
         workflow.set_entry_point("route_intent")
-        workflow.add_conditional_edges("route_intent", lambda state: str(state.get("intent") or "fallback"), {"greeting": "greeting", "today_menu": "menu", "weekly_menu": "menu", "breakfast_menu": "menu", "lunch_menu": "menu", "dinner_menu": "menu", "add_item": "add_item", "remove_item": "remove_item", "change_quantity": "change_quantity", "clear_cart": "clear_cart", "view_cart": "view_cart", "provide_address": "provide_address", "confirm_order": "confirm_order", "track_order": "track_order", "cancel_order": "cancel_order", "subscription_plans": "subscription", "create_subscription": "subscription", "subscription_status": "subscription", "pause_subscription": "subscription", "resume_subscription": "subscription", "cancel_subscription": "subscription", "skip_meal": "subscription", "bulk_order": "subscription", "delivery_area": "rag", "delivery_timing": "rag", "payment_methods": "payment_methods", "faq": "rag", "human_handoff": "human_handoff", "fallback": "fallback"})
-        for node in ("greeting", "menu", "add_item", "remove_item", "change_quantity", "clear_cart", "view_cart", "provide_address", "confirm_order", "track_order", "cancel_order", "subscription", "rag", "payment_methods", "human_handoff", "fallback"):
+        workflow.add_conditional_edges("route_intent", lambda state: str(state.get("intent") or "fallback"), {"greeting": "greeting", "today_menu": "menu", "weekly_menu": "menu", "breakfast_menu": "menu", "lunch_menu": "menu", "dinner_menu": "menu", "add_item": "add_item", "remove_item": "remove_item", "change_quantity": "change_quantity", "clear_cart": "clear_cart", "view_cart": "view_cart", "provide_address": "provide_address", "confirm_order": "confirm_order", "track_order": "track_order", "cancel_order": "cancel_order", "modify_order": "modify_order", "subscription_plans": "subscription", "create_subscription": "subscription", "subscription_status": "subscription", "pause_subscription": "subscription", "resume_subscription": "subscription", "cancel_subscription": "subscription", "skip_meal": "subscription", "bulk_order": "subscription", "delivery_area": "rag", "delivery_timing": "rag", "payment_methods": "payment_methods", "faq": "rag", "human_handoff": "human_handoff", "fallback": "fallback"})
+        for node in ("greeting", "menu", "add_item", "remove_item", "change_quantity", "clear_cart", "view_cart", "provide_address", "confirm_order", "track_order", "cancel_order", "modify_order", "subscription", "rag", "payment_methods", "human_handoff", "fallback"):
             workflow.add_edge(node, "compose_response")
         workflow.add_edge("compose_response", END)
         return workflow.compile()
 
     async def run(self, message: str, conversation_id: str = "default", customer_phone: str | None = None, message_id: str | None = None) -> dict[str, Any]:
+        self.memory.clear_expired_cart(
+            conversation_id,
+            max_age=timedelta(minutes=max(1, int(settings.CART_INACTIVITY_MINUTES))),
+        )
         memory_state = self._load_context(conversation_id)
         if message_id and self.memory.has_processed_message(conversation_id, message_id):
             return {"response": self._reply(memory_state.get("last_response")), "intent": "fallback", "cart": list(memory_state.get("cart", [])), "address": memory_state.get("address"), "order_number": memory_state.get("order_number"), "order_status": memory_state.get("order_status"), "messages": list(memory_state.get("messages", [])), "retrieved_context": ""}

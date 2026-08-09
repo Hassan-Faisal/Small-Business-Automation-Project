@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -66,6 +67,22 @@ class ConversationMemory:
 
         self.db.commit()
         self.db.refresh(record)
+
+    def clear_expired_cart(self, conversation_id: str, max_age: timedelta, now: datetime | None = None) -> bool:
+        """Clear only an inactive unplaced cart using the existing state timestamp."""
+        record = self._load_record(conversation_id)
+        if record is None or not list(record.cart or []):
+            return False
+        updated_at = record.updated_at
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=timezone.utc)
+        current_time = now or datetime.now(timezone.utc)
+        if current_time - updated_at <= max_age:
+            return False
+        record.cart = []
+        self.db.commit()
+        self.db.refresh(record)
+        return True
 
     def has_processed_message(self, conversation_id: str, message_id: str) -> bool:
         record = self._load_record(conversation_id)

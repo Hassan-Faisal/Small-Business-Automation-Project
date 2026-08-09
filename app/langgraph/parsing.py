@@ -4,7 +4,7 @@ import re
 from datetime import date, timedelta
 from typing import Iterable
 
-CANONICAL_INTENTS = ["greeting", "today_menu", "weekly_menu", "breakfast_menu", "lunch_menu", "dinner_menu", "add_item", "remove_item", "change_quantity", "clear_cart", "view_cart", "provide_address", "confirm_order", "track_order", "cancel_order", "subscription_plans", "create_subscription", "subscription_status", "pause_subscription", "resume_subscription", "cancel_subscription", "skip_meal", "bulk_order", "delivery_area", "delivery_timing", "payment_methods", "faq", "human_handoff", "fallback"]
+CANONICAL_INTENTS = ["greeting", "today_menu", "weekly_menu", "breakfast_menu", "lunch_menu", "dinner_menu", "add_item", "remove_item", "change_quantity", "clear_cart", "view_cart", "provide_address", "confirm_order", "track_order", "cancel_order", "modify_order", "subscription_plans", "create_subscription", "subscription_status", "pause_subscription", "resume_subscription", "cancel_subscription", "skip_meal", "bulk_order", "delivery_area", "delivery_timing", "payment_methods", "faq", "human_handoff", "fallback"]
 WEEKDAY_ALIASES = {"monday": {"monday", "mon", "peer", "pir", "somwar"}, "tuesday": {"tuesday", "tue", "mangal", "mangalwar"}, "wednesday": {"wednesday", "wed", "budh", "budhwar"}, "thursday": {"thursday", "thu", "jumeraat", "jumerat"}, "friday": {"friday", "fri", "jumma", "juma"}, "saturday": {"saturday", "sat", "hafta"}, "sunday": {"sunday", "sun", "itwar", "aitwar"}}
 RELATIVE_DAY_ALIASES = {"today": {"today", "aaj", "aj"}, "tomorrow": {"tomorrow", "kal"}, "day_after_tomorrow": {"day after tomorrow", "parson"}}
 MEAL_ALIASES = {"breakfast": {"breakfast", "nashta", "nashtay", "subah ka khana"}, "lunch": {"lunch", "dopahar", "dopehar"}, "dinner": {"dinner", "raat ka khana", "rat ka khana", "shaam ka khana"}}
@@ -105,6 +105,8 @@ def infer_intent(text: str) -> str:
         return "bulk_order"
     if contains_any(normalized, {"cancel my order", "cancel order", "i do not want this order", "mujhay order cancel krna hai", "mujhe order cancel kar do", "mujhe order cancel krna hai", "mera order cancel kar do", "mera order cancel kro", "order cancel kar do"}):
         return "cancel_order"
+    if _phrase_in_text(normalized, "order") and contains_any(normalized, {"change", "modify", "edit", "update"}):
+        return "modify_order"
     if contains_any(normalized, {"track my order", "track order", "order status", "where is my order", "status of order", "mera order kahan hai", "mera order track kro", "order ka status batao"}) or (extract_order_reference(text) is not None and "cancel" not in normalized):
         return "track_order"
     if contains_any(normalized, {"my address is", "deliver to", "address:", "send to", "i live at", "location is", "delivery address", "ye address hai", "address hai", "address save kro"}):

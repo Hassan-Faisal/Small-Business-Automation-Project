@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     ADMIN_COOKIE_NAME: str = "tiffinai_admin"
     ADMIN_COOKIE_SAMESITE: str = "lax"
     BUSINESS_TIMEZONE: str = "Asia/Karachi"
+    CART_INACTIVITY_MINUTES: int = 1440
     ADMIN_FRONTEND_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     model_config = SettingsConfigDict(
@@ -90,5 +91,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
-

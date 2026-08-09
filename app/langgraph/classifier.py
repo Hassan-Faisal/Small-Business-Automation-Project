@@ -16,7 +16,7 @@ logger = setup_logger(__name__)
 ClassifierIntent = Literal[
     "greeting", "today_menu", "weekly_menu", "weekday_menu", "add_item",
     "view_cart", "cart_total", "remove_item", "set_quantity", "increment_quantity", "decrement_quantity", "change_quantity", "clear_cart",
-    "confirm_order", "provide_address", "track_order", "cancel_order",
+    "confirm_order", "provide_address", "track_order", "cancel_order", "modify_order",
     "subscription_plans", "create_subscription", "subscription_status",
     "pause_subscription", "resume_subscription", "cancel_subscription",
     "skip_meal", "bulk_order", "policy_question", "faq", "delivery_area",
@@ -75,7 +75,7 @@ Return JSON only. Do not include markdown or explanations.
 
 Supported intents: greeting, today_menu, weekly_menu, weekday_menu, add_item,
 view_cart, cart_total, remove_item, set_quantity, increment_quantity, decrement_quantity, change_quantity, clear_cart, confirm_order,
-provide_address, track_order, cancel_order, subscription_plans,
+provide_address, track_order, cancel_order, modify_order, subscription_plans,
 create_subscription, subscription_status, pause_subscription,
 resume_subscription, cancel_subscription, skip_meal, bulk_order,
 policy_question, delivery_area, delivery_timing, payment_methods,

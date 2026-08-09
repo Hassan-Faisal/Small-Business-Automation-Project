@@ -147,6 +147,7 @@ def test_every_canonical_intent_is_reachable_and_non_empty(workflow, customer_ph
         'confirm_order': 'Confirm order',
         'track_order': 'Track order ORD-1234',
         'cancel_order': 'Cancel order ORD-1234',
+            'modify_order': 'Change my order',
         'subscription_plans': 'Subscription plans',
         'create_subscription': 'Weekly Full-Day Plan',
         'subscription_status': 'Show my subscription',

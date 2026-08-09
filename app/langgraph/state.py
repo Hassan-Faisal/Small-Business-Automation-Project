@@ -20,6 +20,7 @@ Intent = Literal[
     "confirm_order",
     "track_order",
     "cancel_order",
+    "modify_order",
     "subscription_plans",
     "create_subscription",
     "subscription_status",
