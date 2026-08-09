@@ -57,6 +57,7 @@ class ConversationState(TypedDict, total=False):
     displayed_context_type: str
     pending_subscription_plan: dict[str, object]
     pending_menu_option: dict[str, object]
+    pending_clarification: dict[str, object] | None
     selected_menu_day: str
     classified_item_name: str | None
     classified_query: str | None

@@ -93,3 +93,55 @@ def test_search_candidates_are_catalog_authoritative(workflow, customer_phone, s
     assert expected
     assert result["cart"] == []
     assert all(item.name in result["response"] and f"Rs. {item.price:.2f}" in result["response"] for item in expected)
+
+
+def test_pending_numeric_selection_defaults_to_one(workflow, customer_phone) -> None:
+    ambiguous = run(workflow, "mujhe chicken chahiye", "selection-default", customer_phone)
+    selected = run(workflow, "4", "selection-default", customer_phone)
+    assert "4." in ambiguous["response"]
+    assert selected["cart"]
+    assert selected["cart"][0]["quantity"] == 1
+
+
+def test_pending_numeric_selection_preserves_original_quantity(workflow, customer_phone) -> None:
+    ambiguous = run(workflow, "mujhe 2 chicken chahiye", "selection-quantity", customer_phone)
+    selected = run(workflow, "4", "selection-quantity", customer_phone)
+    assert "4." in ambiguous["response"]
+    assert selected["cart"]
+    assert selected["cart"][0]["quantity"] == 2
+
+
+def test_numeric_quantity_without_pending_clarification_is_not_disabled(workflow, customer_phone) -> None:
+    result = run(workflow, "4 Chicken Karahi add kar do", "selection-direct", customer_phone)
+    assert result["cart"]
+    assert result["cart"][0]["quantity"] == 4
+
+
+def test_pending_selection_accepts_ordinal_and_exact_name(workflow, customer_phone) -> None:
+    run(workflow, "mujhe chicken chahiye", "selection-forms", customer_phone)
+    ordinal = run(workflow, "first one", "selection-forms", customer_phone)
+    assert ordinal["cart"][0]["quantity"] == 1
+
+    run(workflow, "clear cart", "selection-forms", customer_phone)
+    run(workflow, "mujhe chicken chahiye", "selection-name", customer_phone)
+    named = run(workflow, "Chicken Karahi", "selection-name", customer_phone)
+    assert named["cart"][0]["name"] == "Chicken Karahi"
+    assert named["cart"][0]["quantity"] == 1
+
+
+def test_pending_selection_invalid_or_out_of_range_does_not_mutate(workflow, customer_phone) -> None:
+    first = run(workflow, "mujhe chicken chahiye", "selection-invalid", customer_phone)
+    invalid = run(workflow, "not that", "selection-invalid", customer_phone)
+    assert invalid["cart"] == first["cart"] == []
+    assert "1." in invalid["response"]
+
+    out_of_range = run(workflow, "99", "selection-invalid", customer_phone)
+    assert out_of_range["cart"] == []
+
+
+def test_pending_selection_is_consumed_once(workflow, customer_phone) -> None:
+    run(workflow, "mujhe chicken chahiye", "selection-once", customer_phone)
+    selected = run(workflow, "4", "selection-once", customer_phone)
+    repeated = run(workflow, "4", "selection-once", customer_phone)
+    assert selected["cart"][0]["quantity"] == 1
+    assert repeated["cart"][0]["quantity"] == 1

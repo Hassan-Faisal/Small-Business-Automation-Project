@@ -107,6 +107,9 @@ class OrderConversationWorkflow:
         if isinstance(options, list) and options:
             assistant_message["options"] = options
             assistant_message["context_type"] = str(state.get("displayed_context_type") or "")
+        clarification = state.get("pending_clarification")
+        if isinstance(clarification, dict):
+            assistant_message["clarification"] = clarification
         if not messages or messages[-1] != user_message:
             messages.append(user_message)
         messages.append(assistant_message)
@@ -114,9 +117,18 @@ class OrderConversationWorkflow:
 
     def _message_options(self, messages: list[dict[str, Any]]) -> tuple[str | None, list[dict[str, Any]]]:
         for message in reversed(messages):
-            if message.get("role") == "assistant" and isinstance(message.get("options"), list):
-                return str(message.get("context_type") or "") or None, list(message.get("options") or [])
+            if message.get("role") == "assistant":
+                if isinstance(message.get("options"), list):
+                    return str(message.get("context_type") or "") or None, list(message.get("options") or [])
+                return None, []
         return None, []
+
+    def _message_clarification(self, messages: list[dict[str, Any]]) -> dict[str, Any] | None:
+        for message in reversed(messages):
+            if message.get("role") == "assistant":
+                clarification = message.get("clarification")
+                return dict(clarification) if isinstance(clarification, dict) else None
+        return None
 
     def _resolve_context_option(self, memory_state: dict[str, object], message: str) -> dict[str, Any] | None:
         context_type, options = self._message_options(list(memory_state.get("messages", [])))
@@ -189,9 +201,23 @@ class OrderConversationWorkflow:
             intent = "fallback"
         intent_source = "deterministic" if intent != "fallback" else "fallback"
         intent_confidence = 1.0 if intent != "fallback" else 0.0
+        pending_context, pending_options = self._message_options(list(memory_state.get("messages", [])))
+        pending_clarification = self._message_clarification(list(memory_state.get("messages", [])))
+        selection_rejected = False
         selected = self._resolve_context_option(memory_state, message)
+        if pending_context == "add_item" and pending_options and pending_clarification is not None and selected is None:
+            if extract_position_reference(message) is not None or normalize_text(message).isdigit() or infer_intent(message) == "fallback":
+                state["pending_clarification"] = pending_clarification
+                state["displayed_options"] = pending_options
+                state["displayed_context_type"] = "add_item"
+                lines = ["I found these matching meals:"]
+                lines.extend(f"{index}. {option.get('name') or option.get('label')} ({self._price(option.get('price') or 0)})" for index, option in enumerate(pending_options, start=1))
+                lines.append("Reply with a number or exact meal name to add it.")
+                state["clarification_response"] = "\\n".join(lines)
+                selection_rejected = True
         if selected is not None:
             context_type, _ = self._message_options(list(memory_state.get("messages", [])))
+            clarification = self._message_clarification(list(memory_state.get("messages", [])))
             if context_type == "plans":
                 intent = "create_subscription"
                 state["pending_subscription_plan"] = selected
@@ -201,6 +227,8 @@ class OrderConversationWorkflow:
             elif context_type == "add_item":
                 intent = "add_item"
                 state["pending_menu_option"] = selected
+                if clarification is not None:
+                    state["pending_clarification"] = clarification
             elif context_type == "menu_search":
                 intent = "search_menu"
                 state["classified_query"] = str(selected.get("name") or selected.get("label") or "")
@@ -212,7 +240,7 @@ class OrderConversationWorkflow:
             has_subscription_context = bool(self._phone(state.get("customer_phone") or memory_state.get("customer_phone")))
             if has_checkout_context or has_subscription_context:
                 intent = "provide_address"
-        if intent == "fallback":
+        if intent == "fallback" and not selection_rejected:
             started = time.perf_counter()
             classification = await self.classifier.classify(message)
             if classification is not None and classification.confidence >= self.classifier.confidence_threshold:
@@ -315,6 +343,7 @@ class OrderConversationWorkflow:
         memory_state = self._load_context(conversation_id)
         cart = list(memory_state.get("cart", []))
         pending_option = state.get("pending_menu_option") if isinstance(state.get("pending_menu_option"), dict) else None
+        pending_clarification = state.get("pending_clarification") if isinstance(state.get("pending_clarification"), dict) else None
         matches = self._resolve_products(str(state.get("last_user_message", "")), pending_option, state.get("classified_item_name"))
         if not matches:
             state["cart"] = cart
@@ -324,14 +353,25 @@ class OrderConversationWorkflow:
             options = [{"label": product.name, "name": product.name, "price": str(product.price)} for product in matches]
             state["displayed_options"] = options
             state["displayed_context_type"] = "add_item"
+            requested_quantity = state.get("classified_quantity")
+            if requested_quantity is None:
+                requested_quantity = extract_quantity(str(state.get("last_user_message", "")))
+            state["pending_clarification"] = {
+                "type": "product_selection",
+                "operation": "add",
+                "quantity": int(requested_quantity) if requested_quantity is not None else 1,
+            }
             lines = ["I found these matching meals:"]
             lines.extend(f"{option}. {product.name} ({self._price(product.price)})" for option, product in enumerate(matches, start=1))
             lines.append("Reply with a number or exact meal name to add it.")
             state["last_response"] = "\n".join(lines)
             return state
         product = matches[0]
-        message_quantity = extract_quantity(str(state.get("last_user_message", "")))
-        quantity = message_quantity if message_quantity is not None else (state.get("classified_quantity") or 1)
+        if pending_option is not None and pending_clarification is not None:
+            quantity = int(pending_clarification.get("quantity") or 1)
+        else:
+            message_quantity = extract_quantity(str(state.get("last_user_message", "")))
+            quantity = message_quantity if message_quantity is not None else (state.get("classified_quantity") or 1)
         if quantity <= 0:
             state["cart"] = cart
             state["last_response"] = "Quantity must be greater than zero."
@@ -344,6 +384,10 @@ class OrderConversationWorkflow:
         updated_cart.append({"product_id": product.id, "name": product.name, "quantity": quantity, "unit_price": str(product.price), "subtotal": str(subtotal)})
         self.memory.save(conversation_id, cart=updated_cart, customer_phone=state.get("customer_phone"))
         state["cart"] = updated_cart
+        state["pending_menu_option"] = None
+        state["pending_clarification"] = None
+        state["displayed_options"] = []
+        state["displayed_context_type"] = ""
         state["last_response"] = f"Done! {product.name} has been added to your cart.\nCart subtotal: {self._price(calculate_cart_total(updated_cart))}\n\nWant to add anything else?"
         return state
 

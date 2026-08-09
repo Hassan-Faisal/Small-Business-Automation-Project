@@ -65,6 +65,7 @@ class ProductService:
 
         query_tokens = [self.normalize_token(token) for token in normalized_query.split()]
         query_tokens = [token for token in query_tokens if token not in PRODUCT_QUERY_STOP_WORDS]
+        query_tokens = [token for token in query_tokens if not token.isdigit()]
         query_tokens = [token for token in query_tokens if token]
         scored: list[tuple[float, Product]] = []
         for product in products:
