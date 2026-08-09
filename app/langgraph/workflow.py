@@ -165,6 +165,21 @@ class OrderConversationWorkflow:
                 intent_source = "llm_fallback"
                 intent_confidence = classification.confidence
                 intent = str(classification.intent)
+                state["cart_operation"] = classification.operation
+                if intent == "cart_total":
+                    intent = "view_cart"
+                    state["cart_view_mode"] = "total"
+                elif intent == "set_quantity":
+                    intent = "change_quantity"
+                    state["cart_operation"] = "set"
+                elif intent == "increment_quantity":
+                    intent = "change_quantity"
+                    state["cart_operation"] = "increment"
+                elif intent == "decrement_quantity":
+                    intent = "change_quantity"
+                    state["cart_operation"] = "decrement"
+                elif intent == "remove_item":
+                    state["cart_operation"] = "remove"
                 state["classified_item_name"] = classification.item_name
                 state["classified_quantity"] = classification.quantity
                 state["classified_day"] = classification.day
@@ -226,20 +241,18 @@ class OrderConversationWorkflow:
         options = [{"label": day, "day": day} for day in WEEKDAYS]
         lines.extend(f"{index}. {day}" for index, day in enumerate(WEEKDAYS, start=1))
         return "\n".join(lines), options
-    def _resolve_products(self, message: str, pending_option: dict[str, Any] | None = None, item_name: str | None = None) -> list[Product]:
+    def _resolve_products(
+        self,
+        message: str,
+        pending_option: dict[str, Any] | None = None,
+        item_name: str | None = None,
+        candidates: list[Product] | None = None,
+    ) -> list[Product]:
         if pending_option and pending_option.get("name"):
-            product = self.product_service.retrieve_product_by_normalized_name(str(pending_option["name"]))
-            return [product] if product is not None else []
-        normalized = normalize_text(item_name or message)
-        available = self.product_service.list_available_products()
-        matches = [product for product in available if self.product_service.normalize_name(product.name) in normalized]
-        if not matches and item_name:
-            requested_words = set(normalized.split())
-            matches = [product for product in available if requested_words and requested_words.issubset(set(self.product_service.normalize_name(product.name).split()))]
-        if matches:
-            return matches
-        exact = self.product_service.retrieve_product_by_normalized_name(message)
-        return [exact] if exact is not None else []
+            query = str(pending_option["name"])
+        else:
+            query = item_name or message
+        return self.product_service.resolve_available_products(query, candidates=candidates)
 
     def _add_item(self, state: ConversationState) -> ConversationState:
         conversation_id = str(state.get("conversation_id", "default"))
@@ -269,7 +282,7 @@ class OrderConversationWorkflow:
         updated_cart.append({"product_id": product.id, "name": product.name, "quantity": quantity, "unit_price": str(product.price), "subtotal": str(subtotal)})
         self.memory.save(conversation_id, cart=updated_cart, customer_phone=state.get("customer_phone"))
         state["cart"] = updated_cart
-        state["last_response"] = f"Done! {product.name} has been added to your cart.\nSubtotal: {self._price(subtotal)}\n\nWant to add anything else?"
+        state["last_response"] = f"Done! {product.name} has been added to your cart.\nCart subtotal: {self._price(calculate_cart_total(updated_cart))}\n\nWant to add anything else?"
         return state
 
     def _clear_cart(self, state: ConversationState) -> ConversationState:
@@ -287,21 +300,63 @@ class OrderConversationWorkflow:
         if not cart:
             state["last_response"] = "Your cart is empty."
             return state
+
         position = extract_position_reference(message)
-        target = cart[position - 1] if position and 0 < position <= len(cart) else cart[-1]
-        requested = extract_quantity(message)
-        if "decrease" in message or "remove one" in message:
-            requested = max(0, int(target.get("quantity", 1)) - (requested or 1))
-        elif "increase" in message or "add one more" in message or "again" in message:
-            requested = int(target.get("quantity", 1)) + (requested or 1)
+        target_index: int | None = position - 1 if position and 0 < position <= len(cart) else None
+        item_name = state.get("classified_item_name")
+        if target_index is None and item_name:
+            cart_products = [
+                product for item in cart
+                if (product := self.product_service.retrieve_product_by_id(int(item.get("product_id", 0)))) is not None
+            ]
+            matches = self._resolve_products(message, item_name=str(item_name), candidates=cart_products)
+            if len(matches) > 1:
+                state["cart"] = cart
+                state["last_response"] = "I found more than one matching item in your cart. Which one should I update?"
+                return state
+            if matches:
+                target_index = next(
+                    index for index, item in enumerate(cart)
+                    if int(item.get("product_id", 0)) == matches[0].id
+                )
+        if target_index is None:
+            if len(cart) == 1:
+                target_index = 0
+            else:
+                state["cart"] = cart
+                state["last_response"] = "Which cart item should I update?"
+                return state
+
+        requested = state.get("classified_quantity") or extract_quantity(message)
+        operation = str(state.get("cart_operation") or "")
+        if not operation:
+            operation = "increment" if ("add one more" in message or "again" in message) else "decrement" if "decrease" in message else "set"
         if requested is None or requested <= 0:
-            state["last_response"] = "Please tell me the new quantity, for example 'make that 3'."
+            state["cart"] = cart
+            state["last_response"] = "Please tell me the quantity you want."
             return state
-        target["quantity"] = requested
-        target["subtotal"] = str(Decimal(str(target.get("unit_price", 0))) * requested)
-        self.memory.save(conversation_id, cart=cart, customer_phone=state.get("customer_phone"))
-        state["cart"] = cart
-        state["last_response"] = f"Updated {target.get('name', 'meal')} to {requested}. Total: {self._price(calculate_cart_total(cart))}"
+
+        target = cart[target_index]
+        current_quantity = int(target.get("quantity", 0))
+        if operation == "increment":
+            new_quantity = current_quantity + requested
+        elif operation == "decrement":
+            new_quantity = current_quantity - requested
+        else:
+            new_quantity = requested
+
+        if new_quantity <= 0:
+            updated_cart = cart[:target_index] + cart[target_index + 1:]
+            notice = f"Removed {target.get('name', 'meal')} from your cart."
+        else:
+            target["quantity"] = new_quantity
+            target["subtotal"] = str(Decimal(str(target.get("unit_price", 0))) * new_quantity)
+            updated_cart = cart
+            notice = f"Updated {target.get('name', 'meal')} to {new_quantity}."
+
+        self.memory.save(conversation_id, cart=updated_cart, customer_phone=state.get("customer_phone"))
+        state["cart"] = updated_cart
+        state["last_response"] = f"{notice} Cart total: {self._price(calculate_cart_total(updated_cart))}"
         return state
 
     def _cart_line(self, item: dict[str, object]) -> str:
@@ -315,10 +370,15 @@ class OrderConversationWorkflow:
             state["cart"] = []
             state["last_response"] = "Your cart is empty. Type 'today menu' or 'weekly menu' to see available meals."
             return state
+        total = calculate_cart_total(cart)
+        if state.get("cart_view_mode") == "total":
+            state["cart"] = cart
+            state["last_response"] = f"Your cart total is {self._price(total)}."
+            return state
         lines = ["Your cart"]
         lines.extend(self._cart_line(item) for item in cart)
         lines.append("")
-        lines.append(f"Total: {self._price(calculate_cart_total(cart))}")
+        lines.append(f"Total: {self._price(total)}")
         lines.append("Type 'confirm order' to continue.")
         state["cart"] = cart
         state["last_response"] = "\n".join(lines)
@@ -332,41 +392,57 @@ class OrderConversationWorkflow:
             state["cart"] = []
             state["last_response"] = "Your cart is empty."
             return state
+
         message = normalize_text(str(state.get("last_user_message", "")))
-        target_index: int | None = None
         position = extract_position_reference(message)
-        if position is not None and position > 0 and position <= len(cart):
-            target_index = position - 1
-        else:
-            for index, item in enumerate(cart):
-                if self.product_service.normalize_name(str(item.get("name", ""))) in message:
-                    target_index = index
-                    break
+        target_index: int | None = position - 1 if position and 0 < position <= len(cart) else None
+        item_name = state.get("classified_item_name")
         if target_index is None:
-            state["cart"] = cart
-            state["last_response"] = "That meal is not in your cart. Type 'view cart' to review your items."
-            return state
-        target = dict(cart[target_index])
-        remove_quantity = extract_quantity(message) or int(target.get("quantity", 1))
-        updated_cart = list(cart)
-        if remove_quantity >= int(target.get("quantity", 1)):
-            updated_cart.pop(target_index)
-            notice = f"Removed {target['name']} from your cart."
+            cart_products = [
+                product for item in cart
+                if (product := self.product_service.retrieve_product_by_id(int(item.get("product_id", 0)))) is not None
+            ]
+            query = str(item_name) if item_name else message
+            matches = self._resolve_products(message, item_name=query, candidates=cart_products)
+            if len(matches) > 1:
+                state["cart"] = cart
+                state["last_response"] = "I found more than one matching item in your cart. Which one should I remove?"
+                return state
+            if matches:
+                target_index = next(
+                    index for index, item in enumerate(cart)
+                    if int(item.get("product_id", 0)) == matches[0].id
+                )
+        if target_index is None:
+            if len(cart) == 1 and not item_name and position is None:
+                target_index = 0
+            else:
+                state["cart"] = cart
+                state["last_response"] = "Which cart item should I remove?"
+                return state
+
+        target = cart[target_index]
+        requested_from_message = extract_quantity(message)
+        operation = str(state.get("cart_operation") or ("decrement" if requested_from_message is not None else "remove"))
+        requested = state.get("classified_quantity") or requested_from_message or 1
+        current_quantity = int(target.get("quantity", 0))
+        if operation == "decrement":
+            new_quantity = current_quantity - requested
         else:
-            remaining_quantity = int(target.get("quantity", 1)) - remove_quantity
-            unit_price = Decimal(str(target.get("unit_price", 0)))
-            updated_cart[target_index]["quantity"] = remaining_quantity
-            updated_cart[target_index]["subtotal"] = str(unit_price * remaining_quantity)
-            notice = f"Removed {remove_quantity} x {target['name']} from your cart."
+            new_quantity = 0
+
+        if new_quantity > 0:
+            target["quantity"] = new_quantity
+            target["subtotal"] = str(Decimal(str(target.get("unit_price", 0))) * new_quantity)
+            updated_cart = cart
+            notice = f"Removed {requested} x {target.get('name', 'meal')} from your cart."
+        else:
+            updated_cart = cart[:target_index] + cart[target_index + 1:]
+            notice = f"Removed {target.get('name', 'meal')} from your cart."
+
         self.memory.save(conversation_id, cart=updated_cart, customer_phone=state.get("customer_phone"))
         state["cart"] = updated_cart
-        if not updated_cart:
-            state["last_response"] = f"{notice}\nYour cart is now empty."
-            return state
-        lines = [notice, "", "Updated cart:"]
-        lines.extend(self._cart_line(item) for item in updated_cart)
-        lines.append(f"Total: {self._price(calculate_cart_total(updated_cart))}")
-        state["last_response"] = "\n".join(lines)
+        state["last_response"] = f"{notice} Cart total: {self._price(calculate_cart_total(updated_cart))}"
         return state
 
     def _pending_subscription(self, service: SubscriptionService, customer_phone: str) -> CustomerSubscription | None:

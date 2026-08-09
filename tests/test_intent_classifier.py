@@ -160,3 +160,98 @@ def test_one_final_classification_decision_per_turn(workflow, customer_phone, mo
 
     assert len(events) == 1
     assert events[0]["intent_source"] == "llm_fallback"
+
+def install_classifier(workflow, classification: IntentClassification):
+    class StubClassifier:
+        confidence_threshold = 0.78
+        calls = 0
+
+        async def classify(self, message: str) -> IntentClassification:
+            self.calls += 1
+            return classification
+
+    stub = StubClassifier()
+    workflow.classifier = stub  # type: ignore[assignment]
+    return stub
+
+
+def run(workflow, message: str, conversation_id: str, customer_phone: str):
+    return asyncio.run(workflow.run(message, conversation_id=conversation_id, customer_phone=customer_phone))
+
+
+def test_set_quantity_replaces_existing_quantity(workflow, customer_phone) -> None:
+    initial = run(workflow, "Add 1 Chicken Biryani", "cart-set", customer_phone)
+    assert initial["cart"][0]["quantity"] == 1
+    stub = install_classifier(workflow, IntentClassification(
+        intent="set_quantity", item_name="Biryani", quantity=2, confidence=0.95,
+    ))
+    result = run(workflow, "natural quantity update", "cart-set", customer_phone)
+    assert stub.calls == 1
+    assert result["cart"][0]["quantity"] == 2
+
+
+def test_increment_quantity_adds_to_existing_quantity(workflow, customer_phone) -> None:
+    run(workflow, "Add 2 Chicken Biryani", "cart-increment", customer_phone)
+    install_classifier(workflow, IntentClassification(
+        intent="increment_quantity", item_name="Biryani", quantity=2, confidence=0.95,
+    ))
+    result = run(workflow, "unfamiliar customer message", "cart-increment", customer_phone)
+    assert result["cart"][0]["quantity"] == 4
+
+
+def test_decrement_quantity_reduces_and_remove_deletes(workflow, customer_phone) -> None:
+    run(workflow, "Add 2 Chicken Biryani", "cart-decrement", customer_phone)
+    install_classifier(workflow, IntentClassification(
+        intent="decrement_quantity", item_name="Biryani", quantity=1, confidence=0.95,
+    ))
+    reduced = run(workflow, "unfamiliar customer message", "cart-decrement", customer_phone)
+    assert reduced["cart"][0]["quantity"] == 1
+
+    install_classifier(workflow, IntentClassification(
+        intent="remove_item", item_name="Biryani", confidence=0.95,
+    ))
+    removed = run(workflow, "natural removal request", "cart-decrement", customer_phone)
+    assert removed["cart"] == []
+
+
+def test_cart_total_is_derived_from_current_server_cart(workflow, customer_phone) -> None:
+    run(workflow, "Add 2 Chicken Biryani", "cart-total", customer_phone)
+    install_classifier(workflow, IntentClassification(intent="cart_total", confidence=0.95))
+    result = run(workflow, "natural total request", "cart-total", customer_phone)
+    assert result["intent"] == "view_cart"
+    assert "your cart total is rs. 640.00" in result["response"].lower()
+
+
+def test_active_cart_context_can_render_as_current_order(workflow, customer_phone) -> None:
+    run(workflow, "Add 1 Chicken Biryani", "cart-context", customer_phone)
+    install_classifier(workflow, IntentClassification(intent="view_cart", confidence=0.95))
+    result = run(workflow, "unfamiliar customer message", "cart-context", customer_phone)
+    assert result["intent"] == "view_cart"
+    assert "chicken biryani" in result["response"].lower()
+
+
+def test_product_resolver_handles_general_inflection_and_spelling_variation(seeded_products) -> None:
+    service = seeded_products["service"]
+    assert [product.name for product in service.resolve_available_products("pizzas")] == ["Pizza"]
+    assert [product.name for product in service.resolve_available_products("burgers")] == ["Burger"]
+    assert [product.name for product in service.resolve_available_products("friez")] == ["Fries"]
+
+
+def test_product_resolver_returns_ambiguity_without_guessing(workflow) -> None:
+    matches = workflow.product_service.resolve_available_products("chicken")
+    assert len(matches) > 1
+
+
+def test_fuzzy_resolver_handles_inflected_tiffin_product_name(workflow) -> None:
+    matches = workflow.product_service.resolve_available_products("qormay")
+    assert [product.name for product in matches] == ["Chicken Qorma"]
+
+
+def test_classified_checkout_uses_existing_confirmation_safety(workflow, customer_phone) -> None:
+    run(workflow, "Add 1 Chicken Biryani", "classified-checkout", customer_phone)
+    address = run(workflow, "House 12, Street 4, Islamabad", "classified-checkout", customer_phone)
+    assert "saved your delivery address" in address["response"].lower()
+    install_classifier(workflow, IntentClassification(intent="confirm_order", confidence=0.95))
+    result = run(workflow, "unfamiliar completion request", "classified-checkout", customer_phone)
+    assert result["order_number"].startswith("TF-")
+    assert result["cart"] == []

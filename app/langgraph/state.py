@@ -64,3 +64,5 @@ class ConversationState(TypedDict, total=False):
     intent_source: str
     intent_confidence: float
     clarification_response: str | None
+    cart_operation: str | None
+    cart_view_mode: str | None
