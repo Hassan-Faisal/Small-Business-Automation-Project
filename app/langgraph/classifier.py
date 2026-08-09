@@ -15,7 +15,7 @@ logger = setup_logger(__name__)
 
 ClassifierIntent = Literal[
     "greeting", "today_menu", "weekly_menu", "weekday_menu", "add_item",
-    "view_cart", "cart_total", "remove_item", "set_quantity", "increment_quantity", "decrement_quantity", "change_quantity", "clear_cart",
+    "view_cart", "search_menu", "cart_total", "remove_item", "set_quantity", "increment_quantity", "decrement_quantity", "change_quantity", "clear_cart",
     "confirm_order", "provide_address", "track_order", "cancel_order", "modify_order",
     "subscription_plans", "create_subscription", "subscription_status",
     "pause_subscription", "resume_subscription", "cancel_subscription",
@@ -31,6 +31,8 @@ class IntentClassification(BaseModel):
 
     intent: ClassifierIntent
     item_name: str | None = Field(default=None, max_length=120)
+    query: str | None = Field(default=None, max_length=120)
+    meal_type: str | None = Field(default=None, max_length=20)
     quantity: int | None = Field(default=None, ge=1, le=50)
     operation: CartOperation | None = None
     day: str | None = Field(default=None, max_length=20)
@@ -74,7 +76,7 @@ class StructuredIntentClassifier:
 Return JSON only. Do not include markdown or explanations.
 
 Supported intents: greeting, today_menu, weekly_menu, weekday_menu, add_item,
-view_cart, cart_total, remove_item, set_quantity, increment_quantity, decrement_quantity, change_quantity, clear_cart, confirm_order,
+view_cart, search_menu, cart_total, remove_item, set_quantity, increment_quantity, decrement_quantity, change_quantity, clear_cart, confirm_order,
 provide_address, track_order, cancel_order, modify_order, subscription_plans,
 create_subscription, subscription_status, pause_subscription,
 resume_subscription, cancel_subscription, skip_meal, bulk_order,
@@ -82,7 +84,7 @@ policy_question, delivery_area, delivery_timing, payment_methods,
 human_handoff, unknown.
 
 Rules:
-- Extract only item name, quantity, day, order number, and address when present.
+- Extract only item name, search query, quantity, meal period, day, order number, and address when present.
 - Ignore prices, database IDs, availability claims, and order status claims.
 - Use multiple_intents=true for requests asking for more than one action.
 - Use unknown and low confidence when unclear.
@@ -90,7 +92,7 @@ Rules:
 - For quantity changes, distinguish operation set, increment, decrement, or remove. An explicit removal quantity is decrement; remove is for deleting the whole line.
 
 JSON shape:
-{{"intent":"unknown","item_name":null,"quantity":null,"operation":null,"day":null,"order_number":null,"address":null,"confidence":0.0,"multiple_intents":false}}
+{{"intent":"unknown","item_name":null,"query":null,"meal_type":null,"quantity":null,"operation":null,"day":null,"order_number":null,"address":null,"confidence":0.0,"multiple_intents":false}}
 
 Customer message: {message}
 """

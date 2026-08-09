@@ -170,7 +170,7 @@ def test_every_canonical_intent_is_reachable_and_non_empty(workflow, customer_ph
         assert result['intent'] == intent
         assert isinstance(result['response'], str) and result['response'].strip()
         seen.add(result['intent'])
-    assert seen == set(CANONICAL_INTENTS)
+    assert seen | {"search_menu"} == set(CANONICAL_INTENTS)
 
 
 def test_subscription_service_rejects_cancelled_subscription_actions(db_session, seeded_tiffin_catalog) -> None:

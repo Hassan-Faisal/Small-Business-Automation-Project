@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
@@ -74,6 +75,45 @@ class TiffinCatalogService:
 
     def list_meals_for_day_and_type(self, day_of_week: str, meal_type: str) -> list[MealOffering]:
         return self.list_meal_offerings(day_of_week=day_of_week, meal_type=meal_type)
+
+    @staticmethod
+    def _search_token(token: str) -> str:
+        return "".join(character for character in token.lower() if character.isalnum())
+
+    def search_meal_offerings(
+        self,
+        query: str,
+        *,
+        day_of_week: str | None = None,
+        meal_type: str | None = None,
+    ) -> list[MealOffering]:
+        """Find active catalog items using conservative token matching."""
+        query_tokens = [self._search_token(token) for token in query.split()]
+        query_tokens = [token for token in query_tokens if token]
+        if not query_tokens:
+            return []
+        offerings = self.list_meal_offerings(day_of_week=day_of_week, meal_type=meal_type, active_only=True)
+        scored: list[tuple[float, MealOffering]] = []
+        for offering in offerings:
+            name_tokens = [self._search_token(token) for token in offering.name.split()]
+            name_text = self._search_token(offering.name)
+            token_scores: list[float] = []
+            for query_token in query_tokens:
+                if query_token in name_text:
+                    token_scores.append(1.0)
+                else:
+                    token_scores.append(max((SequenceMatcher(None, query_token, name_token).ratio() for name_token in name_tokens), default=0.0))
+            if all(score >= 0.82 for score in token_scores):
+                scored.append((sum(token_scores) / len(token_scores), offering))
+        if not scored:
+            return []
+        highest = max(score for score, _ in scored)
+        unique: dict[str, MealOffering] = {}
+        for score, offering in sorted(scored, key=lambda item: (-item[0], item[1].name.lower(), item[1].day_of_week, item[1].meal_type)):
+            if highest - score <= 0.06:
+                unique.setdefault(self._search_token(offering.name), offering)
+        return list(unique.values())
+
 
     def format_daily_menu(self, day_of_week: str) -> str:
         menu = self.list_daily_menu(day_of_week)
