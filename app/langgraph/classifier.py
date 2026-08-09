@@ -87,7 +87,7 @@ Rules:
 - Use multiple_intents=true for requests asking for more than one action.
 - Use unknown and low confidence when unclear.
 - Never decide prices, totals, availability, ownership, or cancellation eligibility.
-- For quantity changes, distinguish operation set, increment, decrement, or remove.
+- For quantity changes, distinguish operation set, increment, decrement, or remove. An explicit removal quantity is decrement; remove is for deleting the whole line.
 
 JSON shape:
 {{"intent":"unknown","item_name":null,"quantity":null,"operation":null,"day":null,"order_number":null,"address":null,"confidence":0.0,"multiple_intents":false}}

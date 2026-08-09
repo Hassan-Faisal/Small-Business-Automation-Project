@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from decimal import Decimal
 
 from app.langgraph.classifier import IntentClassification, StructuredIntentClassifier
 import app.langgraph.workflow as workflow_module
@@ -254,4 +255,114 @@ def test_classified_checkout_uses_existing_confirmation_safety(workflow, custome
     install_classifier(workflow, IntentClassification(intent="confirm_order", confidence=0.95))
     result = run(workflow, "unfamiliar completion request", "classified-checkout", customer_phone)
     assert result["order_number"].startswith("TF-")
+    assert result["cart"] == []
+
+
+def test_active_cart_order_language_defers_broad_parser_to_classifier(workflow, customer_phone) -> None:
+    run(workflow, "Add 1 Chicken Biryani", "context-order", customer_phone)
+    stub = install_classifier(workflow, IntentClassification(intent="view_cart", confidence=0.95))
+    result = run(workflow, "abhi mere order main kia hai?", "context-order", customer_phone)
+    assert stub.calls == 1
+    assert result["intent"] == "view_cart"
+    assert "chicken biryani" in result["response"].lower()
+
+
+def test_explicit_roman_urdu_removal_quantity_decrements(workflow, customer_phone) -> None:
+    run(workflow, "Add 2 Chicken Biryani", "roman-decrement", customer_phone)
+    install_classifier(workflow, IntentClassification(intent="remove_item", item_name="biryani", quantity=1, confidence=0.95))
+    result = run(workflow, "ek biryani hata do", "roman-decrement", customer_phone)
+    assert result["intent"] in {"remove_item", "change_quantity"}
+    assert result["cart"][0]["quantity"] == 1
+
+
+def test_active_cart_completion_language_uses_checkout_workflow(workflow, customer_phone) -> None:
+    run(workflow, "Add 1 Chicken Biryani", "context-checkout", customer_phone)
+    stub = install_classifier(workflow, IntentClassification(intent="confirm_order", confidence=0.95))
+    result = run(workflow, "bas itna hi order kar dain", "context-checkout", customer_phone)
+    assert stub.calls == 1
+    assert result["intent"] == "confirm_order"
+    assert "delivery address" in result["response"].lower()
+    assert result["cart"][0]["quantity"] == 1
+
+
+def test_full_conversational_cart_regression(workflow, customer_phone) -> None:
+    conversation_id = "multi-turn-commerce"
+    menu = run(workflow, "show today's menu", conversation_id, customer_phone)
+    assert menu["intent"] == "today_menu"
+
+    added_biryani = run(workflow, "add one Chicken Biryani", conversation_id, customer_phone)
+    assert [(item["name"], item["quantity"]) for item in added_biryani["cart"]] == [("Chicken Biryani", 1)]
+
+    class ConversationClassifier:
+        confidence_threshold = 0.78
+        calls = 0
+
+        async def classify(self, message: str) -> IntentClassification:
+            self.calls += 1
+            normalized = message.lower()
+            if "qorma" in normalized or "qorm" in normalized:
+                return IntentClassification(intent="add_item", item_name="qormay", quantity=2, confidence=0.95)
+            if "order main" in normalized or "order mai" in normalized:
+                return IntentClassification(intent="view_cart", confidence=0.95)
+            if "hata" in normalized or "remove" in normalized:
+                return IntentClassification(intent="remove_item", item_name="biryani", quantity=1, confidence=0.95)
+            if "make" in normalized:
+                return IntentClassification(intent="set_quantity", item_name="biryani", quantity=2, confidence=0.95)
+            if "total" in normalized:
+                return IntentClassification(intent="cart_total", confidence=0.95)
+            return IntentClassification(intent="confirm_order", confidence=0.95)
+
+    classifier = ConversationClassifier()
+    workflow.classifier = classifier  # type: ignore[assignment]
+    added_qorma = run(workflow, "do qormay bhi kr dain", conversation_id, customer_phone)
+    assert sorted((item["name"], item["quantity"]) for item in added_qorma["cart"]) == [
+        ("Chicken Biryani", 1),
+        ("Chicken Qorma", 2),
+    ]
+
+    viewed = run(workflow, "mery order mai kia kuch hai?", conversation_id, customer_phone)
+    assert viewed["intent"] == "view_cart"
+    assert "chicken qorma" in viewed["response"].lower()
+
+    set_result = run(workflow, "make biryani 2", conversation_id, customer_phone)
+    assert sorted((item["name"], item["quantity"]) for item in set_result["cart"]) == [
+        ("Chicken Biryani", 2),
+        ("Chicken Qorma", 2),
+    ]
+
+    total_before = run(workflow, "Total kitna ban raha hai?", conversation_id, customer_phone)
+    expected_before = sum(Decimal(item["unit_price"]) * item["quantity"] for item in total_before["cart"])
+    assert f"{expected_before:.2f}" in total_before["response"]
+
+    decremented = run(workflow, "ek biryani hata do", conversation_id, customer_phone)
+    assert sorted((item["name"], item["quantity"]) for item in decremented["cart"]) == [
+        ("Chicken Biryani", 1),
+        ("Chicken Qorma", 2),
+    ]
+
+    total_after = run(workflow, "Total kitna ban raha hai?", conversation_id, customer_phone)
+    expected_after = sum(Decimal(item["unit_price"]) * item["quantity"] for item in total_after["cart"])
+    assert f"{expected_after:.2f}" in total_after["response"]
+
+    final_view = run(workflow, "abhi mere order main kia hai?", conversation_id, customer_phone)
+    assert final_view["intent"] == "view_cart"
+
+    checkout = run(workflow, "bas itna hi order kar dain", conversation_id, customer_phone)
+    assert checkout["intent"] == "confirm_order"
+    assert "delivery address" in checkout["response"].lower()
+    assert checkout["cart"] == decremented["cart"]
+
+
+def test_decrement_larger_than_quantity_removes_line_safely(workflow, customer_phone) -> None:
+    run(workflow, "Add 2 Chicken Biryani", "decrement-large", customer_phone)
+    install_classifier(workflow, IntentClassification(
+        intent="decrement_quantity", item_name="biryani", quantity=5, confidence=0.95,
+    ))
+    result = run(workflow, "unfamiliar decrement request", "decrement-large", customer_phone)
+    assert result["cart"] == []
+
+
+def test_remove_without_explicit_quantity_removes_entire_line(workflow, customer_phone) -> None:
+    run(workflow, "Add 2 Chicken Biryani", "remove-line", customer_phone)
+    result = run(workflow, "remove Chicken Biryani", "remove-line", customer_phone)
     assert result["cart"] == []

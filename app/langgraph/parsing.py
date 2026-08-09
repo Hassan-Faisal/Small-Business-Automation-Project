@@ -8,7 +8,7 @@ CANONICAL_INTENTS = ["greeting", "today_menu", "weekly_menu", "breakfast_menu", 
 WEEKDAY_ALIASES = {"monday": {"monday", "mon", "peer", "pir", "somwar"}, "tuesday": {"tuesday", "tue", "mangal", "mangalwar"}, "wednesday": {"wednesday", "wed", "budh", "budhwar"}, "thursday": {"thursday", "thu", "jumeraat", "jumerat"}, "friday": {"friday", "fri", "jumma", "juma"}, "saturday": {"saturday", "sat", "hafta"}, "sunday": {"sunday", "sun", "itwar", "aitwar"}}
 RELATIVE_DAY_ALIASES = {"today": {"today", "aaj", "aj"}, "tomorrow": {"tomorrow", "kal"}, "day_after_tomorrow": {"day after tomorrow", "parson"}}
 MEAL_ALIASES = {"breakfast": {"breakfast", "nashta", "nashtay", "subah ka khana"}, "lunch": {"lunch", "dopahar", "dopehar"}, "dinner": {"dinner", "raat ka khana", "rat ka khana", "shaam ka khana"}}
-NUMBER_WORDS = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+NUMBER_WORDS = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "ek": 1, "aik": 1, "do": 2, "teen": 3, "char": 4, "chaar": 4, "paanch": 5, "che": 6, "saat": 7, "aath": 8, "nau": 9, "das": 10}
 POSITION_WORDS = {"first": 1, "second": 2, "third": 3, "last": -1}
 
 

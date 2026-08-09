@@ -135,10 +135,24 @@ class OrderConversationWorkflow:
                     if str(option.get("day") or "").lower() == selected_day.lower():
                         return option
         return None
+
+    def _should_defer_active_cart_semantics(self, intent: str, message: str, memory_state: dict[str, object]) -> bool:
+        """Let the semantic classifier arbitrate broad order language over an active cart."""
+        if intent != "add_item" or not list(memory_state.get("cart", [])):
+            return False
+        if extract_order_reference(message) is not None:
+            return False
+        # A resolvable product is strong evidence for a real add request. If the
+        # broad parser only saw "order" but no product exists in the message,
+        # defer to the classifier for cart-summary or checkout semantics.
+        return not bool(self._resolve_products(message))
+
     async def _route_intent(self, state: ConversationState) -> ConversationState:
         memory_state = self._load_context(str(state.get("conversation_id", "default")))
         message = str(state.get("last_user_message", ""))
         intent = infer_intent(message)
+        if self._should_defer_active_cart_semantics(intent, message, memory_state):
+            intent = "fallback"
         intent_source = "deterministic" if intent != "fallback" else "fallback"
         intent_confidence = 1.0 if intent != "fallback" else 0.0
         selected = self._resolve_context_option(memory_state, message)
@@ -179,7 +193,7 @@ class OrderConversationWorkflow:
                     intent = "change_quantity"
                     state["cart_operation"] = "decrement"
                 elif intent == "remove_item":
-                    state["cart_operation"] = "remove"
+                    state["cart_operation"] = classification.operation or ("decrement" if classification.quantity is not None else "remove")
                 state["classified_item_name"] = classification.item_name
                 state["classified_quantity"] = classification.quantity
                 state["classified_day"] = classification.day
@@ -423,7 +437,9 @@ class OrderConversationWorkflow:
 
         target = cart[target_index]
         requested_from_message = extract_quantity(message)
-        operation = str(state.get("cart_operation") or ("decrement" if requested_from_message is not None else "remove"))
+        operation = str(state.get("cart_operation") or "remove")
+        if requested_from_message is not None and operation in {"", "remove"}:
+            operation = "decrement"
         requested = state.get("classified_quantity") or requested_from_message or 1
         current_quantity = int(target.get("quantity", 0))
         if operation == "decrement":
