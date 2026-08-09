@@ -139,7 +139,7 @@ class OrderConversationWorkflow:
         memory_state = self._load_context(str(state.get("conversation_id", "default")))
         message = str(state.get("last_user_message", ""))
         intent = infer_intent(message)
-        intent_source = "deterministic"
+        intent_source = "deterministic" if intent != "fallback" else "fallback"
         intent_confidence = 1.0 if intent != "fallback" else 0.0
         selected = self._resolve_context_option(memory_state, message)
         if selected is not None:
@@ -173,11 +173,11 @@ class OrderConversationWorkflow:
                 if classification.multiple_intents:
                     intent = "fallback"
                     state["clarification_response"] = "I can help with one action at a time. Would you like to see the menu, or add an item first?"
-            logger.info("intent_classified", extra={"event": "intent_classified", "intent_source": intent_source, "predicted_intent": intent, "confidence": intent_confidence, "clarification_required": intent == "fallback", "classifier_latency_ms": round((time.perf_counter() - started) * 1000, 2)})
+            elif classification is not None:
+                logger.info("classifier_result_rejected", extra={"event": "classifier_result_rejected", "reason": "confidence_below_threshold", "intent": classification.intent, "confidence": classification.confidence, "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
         state["intent_source"] = intent_source
         state["intent_confidence"] = intent_confidence
-        if intent_source == "deterministic":
-            logger.info("intent_classified", extra={"event": "intent_classified", "intent_source": "deterministic", "predicted_intent": intent, "confidence": intent_confidence, "clarification_required": False, "classifier_latency_ms": 0})
+        logger.info("intent_classified", extra={"event": "intent_classified", "intent_source": intent_source, "predicted_intent": intent if intent in CANONICAL_INTENTS else "fallback", "confidence": intent_confidence, "clarification_required": intent == "fallback"})
         state["intent"] = intent if intent in CANONICAL_INTENTS else "fallback"
         return state
 
@@ -691,4 +691,4 @@ class OrderConversationWorkflow:
         result = await self.graph.ainvoke(initial_state)
         if message_id and not self.memory.has_processed_message(conversation_id, message_id):
             self.memory.mark_processed_message(conversation_id, message_id)
-        return {"response": self._reply(result.get("last_response")), "intent": result.get("intent", "fallback"), "cart": result.get("cart", []), "address": result.get("address"), "order_number": result.get("order_number"), "order_status": result.get("order_status"), "messages": result.get("messages", []), "retrieved_context": result.get("retrieved_context", "")}
+        return {"response": self._reply(result.get("last_response")), "intent": result.get("intent", "fallback"), "intent_source": result.get("intent_source", "fallback"), "intent_confidence": result.get("intent_confidence", 0.0), "cart": result.get("cart", []), "address": result.get("address"), "order_number": result.get("order_number"), "order_status": result.get("order_status"), "messages": result.get("messages", []), "retrieved_context": result.get("retrieved_context", "")}

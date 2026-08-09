@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from app.langgraph.classifier import IntentClassification, StructuredIntentClassifier
+import app.langgraph.workflow as workflow_module
 
 
 class FakeLLM:
@@ -114,3 +115,48 @@ def test_ambiguous_classified_product_requires_clarification(workflow, customer_
     assert result["intent"] == "add_item"
     assert result["cart"] == []
     assert "matching meal" in result["response"].lower() or "which" in result["response"].lower()
+
+def test_production_phrase_uses_classifier_once_and_preserves_cart(workflow, customer_phone) -> None:
+    existing = asyncio.run(workflow.run("I want Chicken Karahi", conversation_id="classifier-production", customer_phone=customer_phone))
+    assert existing["cart"][0]["name"] == "Chicken Karahi"
+
+    class StubClassifier:
+        confidence_threshold = 0.78
+        calls = 0
+
+        async def classify(self, message: str) -> IntentClassification:
+            self.calls += 1
+            return IntentClassification(intent="add_item", item_name="Chicken Pulao", quantity=1, confidence=0.95)
+
+    stub = StubClassifier()
+    workflow.classifier = stub  # type: ignore[assignment]
+    result = asyncio.run(workflow.run("Chicken Pulao bhi aik kar dena", conversation_id="classifier-production", customer_phone=customer_phone))
+
+    assert stub.calls == 1
+    assert result["intent_source"] == "llm_fallback"
+    assert result["intent"] == "add_item"
+    assert [(item["name"], item["quantity"]) for item in result["cart"]] == [
+        ("Chicken Karahi", 1),
+        ("Chicken Pulao", 1),
+    ]
+    assert "didn't quite understand" not in result["response"].lower()
+
+def test_one_final_classification_decision_per_turn(workflow, customer_phone, monkeypatch) -> None:
+    class StubClassifier:
+        confidence_threshold = 0.78
+
+        async def classify(self, message: str) -> IntentClassification:
+            return IntentClassification(intent="add_item", item_name="Chicken Pulao", quantity=1, confidence=0.95)
+
+    events: list[dict[str, object]] = []
+
+    def capture_info(message: str, *args: object, **kwargs: object) -> None:
+        if message == "intent_classified":
+            events.append(dict(kwargs.get("extra") or {}))
+
+    monkeypatch.setattr(workflow_module.logger, "info", capture_info)
+    workflow.classifier = StubClassifier()  # type: ignore[assignment]
+    asyncio.run(workflow.run("Chicken Pulao bhi aik kar dena", conversation_id="classifier-one-decision", customer_phone=customer_phone))
+
+    assert len(events) == 1
+    assert events[0]["intent_source"] == "llm_fallback"

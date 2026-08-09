@@ -6,8 +6,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from app.core.config import settings
+from app.core.logging import setup_logger
 from app.langgraph.parsing import extract_day, extract_order_reference, normalize_text
 from app.services.openai_service import OpenAIService
+
+logger = setup_logger(__name__)
 
 ClassifierIntent = Literal[
     "greeting", "today_menu", "weekly_menu", "weekday_menu", "add_item",
@@ -90,18 +94,66 @@ Customer message: {message}
     async def classify(self, message: str) -> IntentClassification | None:
         if not normalize_text(message):
             return None
+
         started = time.perf_counter()
+        logger.info("classifier_invocation_begin", extra={
+            "event": "classifier_invocation_begin",
+        })
         try:
+            if not settings.OPENAI_API_KEY.strip() and isinstance(self.llm, OpenAIService):
+                logger.warning("classifier_invocation_failed", extra={
+                    "event": "classifier_invocation_failed",
+                    "reason": "configuration_missing",
+                    "exception_type": "ConfigurationError",
+                    "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+                })
+                return None
+
             raw = await self.llm.generate_response(self.build_prompt(message))
+            if not raw.strip():
+                logger.warning("classifier_invocation_failed", extra={
+                    "event": "classifier_invocation_failed",
+                    "reason": "empty_model_response",
+                    "exception_type": None,
+                    "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+                })
+                return None
+
             parsed: Any = json.loads(raw)
             result = IntentClassification.model_validate(parsed)
             if result.intent == "weekday_menu":
                 result = result.model_copy(update={"intent": "today_menu"})
             if result.intent == "policy_question":
                 result = result.model_copy(update={"intent": "faq"})
+            logger.info("classifier_invocation_success", extra={
+                "event": "classifier_invocation_success",
+                "intent": result.intent,
+                "confidence": result.confidence,
+                "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+            })
             return result
-        except Exception:
+        except json.JSONDecodeError:
+            logger.warning("classifier_invocation_failed", extra={
+                "event": "classifier_invocation_failed",
+                "reason": "malformed_json",
+                "exception_type": "JSONDecodeError",
+                "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+            })
             return None
-        finally:
-            # The caller logs the safe classification result and latency.
-            _ = time.perf_counter() - started
+        except ValidationError:
+            logger.warning("classifier_invocation_failed", extra={
+                "event": "classifier_invocation_failed",
+                "reason": "schema_validation_failed",
+                "exception_type": "ValidationError",
+                "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+            })
+            return None
+        except Exception as exc:
+            logger.warning("classifier_invocation_failed", extra={
+                "event": "classifier_invocation_failed",
+                "reason": "model_error",
+                "exception_type": type(exc).__name__,
+                "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+            })
+            return None
+
