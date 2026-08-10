@@ -1,12 +1,12 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.dependencies.admin import require_active_admin
 from app.dependencies.database import get_db
 from app.models.admin_user import AdminUser
-from app.schemas.admin_dashboard import AdminDashboardSummaryResponse
+from app.schemas.admin_dashboard import AdminDashboardSummaryResponse, DashboardPeriod
 from app.services.admin_dashboard_service import AdminDashboardService
 
 router = APIRouter(prefix="/admin/dashboard", tags=["admin-dashboard"])
@@ -18,7 +18,8 @@ def get_admin_dashboard_service(db: Session = Depends(get_db)) -> AdminDashboard
 
 @router.get("/summary", response_model=AdminDashboardSummaryResponse)
 def dashboard_summary(
+    period: DashboardPeriod = Query(default=DashboardPeriod.TODAY),
     _admin: AdminUser = Depends(require_active_admin),
     service: AdminDashboardService = Depends(get_admin_dashboard_service),
 ) -> AdminDashboardSummaryResponse:
-    return service.get_summary()
+    return service.get_summary(period)

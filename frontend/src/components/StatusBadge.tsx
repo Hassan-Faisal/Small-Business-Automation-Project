@@ -17,10 +17,10 @@ const colors: Record<string, string> = {
   confirmed: "bg-blue-100 text-blue-800",
   preparing: "bg-violet-100 text-violet-800",
   ready: "bg-teal-100 text-teal-800",
-  rider_assigned: "bg-indigo-100 text-indigo-800",
+  rider_assigned: "bg-sky-100 text-sky-800",
   out_for_delivery: "bg-orange-100 text-orange-800",
   delivered: "bg-emerald-100 text-emerald-800",
-  completed: "bg-emerald-100 text-emerald-800",
+  completed: "bg-slate-200 text-slate-800",
   cancelled: "bg-rose-100 text-rose-800",
 };
 

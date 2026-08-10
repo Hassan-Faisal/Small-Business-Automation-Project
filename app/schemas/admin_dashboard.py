@@ -1,14 +1,29 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
+
+
+class DashboardPeriod(StrEnum):
+    TODAY = "today"
+    SEVEN_DAYS = "7d"
+    THIRTY_DAYS = "30d"
+    ALL_TIME = "all"
 
 
 class TopSellingItemResponse(BaseModel):
     name: str
     quantity: int
+    revenue: Decimal
+
+
+class DailyPerformanceResponse(BaseModel):
+    date: str
+    orders: int
+    revenue: Decimal
 
 
 class RecentOrderResponse(BaseModel):
@@ -23,6 +38,11 @@ class RecentOrderResponse(BaseModel):
 
 
 class AdminDashboardSummaryResponse(BaseModel):
+    period: DashboardPeriod
+    total_orders: int
+    total_revenue: Decimal
+    period_orders: int
+    period_revenue: Decimal
     today_orders: int
     pending_orders: int
     draft_orders: int
@@ -38,4 +58,5 @@ class AdminDashboardSummaryResponse(BaseModel):
     active_subscriptions: int
     total_customers: int
     top_selling_item: TopSellingItemResponse | None
+    performance: list[DailyPerformanceResponse]
     recent_orders: list[RecentOrderResponse]

@@ -32,3 +32,22 @@ def test_admin_frontend_origins_parse_and_reject_wildcard() -> None:
             DATABASE_URL="postgresql+psycopg2://postgres:postgres@localhost:5432/tiffin_ai",
             ADMIN_FRONTEND_ORIGINS="*",
         )
+
+
+@pytest.mark.parametrize("samesite", ["lax", "strict", "none", "LAX", "None"])
+def test_admin_cookie_samesite_accepts_supported_values(samesite: str) -> None:
+    configured = Settings(
+        _env_file=None,
+        DATABASE_URL="postgresql+psycopg2://postgres:postgres@localhost:5432/tiffin_ai",
+        ADMIN_COOKIE_SAMESITE=samesite,
+    )
+    assert configured.ADMIN_COOKIE_SAMESITE == samesite.lower()
+
+
+def test_admin_cookie_samesite_rejects_invalid_value() -> None:
+    with pytest.raises(ValidationError, match="lax, strict, or none"):
+        Settings(
+            _env_file=None,
+            DATABASE_URL="postgresql+psycopg2://postgres:postgres@localhost:5432/tiffin_ai",
+            ADMIN_COOKIE_SAMESITE="cross-site",
+        )

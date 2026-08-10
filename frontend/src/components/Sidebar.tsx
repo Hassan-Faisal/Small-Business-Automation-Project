@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+﻿import { NavLink } from "react-router-dom";
 
 import { useAuth } from "../contexts/AuthContext";
 
@@ -6,9 +6,6 @@ const links = [
   { to: "/dashboard", label: "Dashboard", end: true },
   { to: "/orders", label: "Orders" },
   { to: "/menu", label: "Menu" },
-  { to: "/customers", label: "Customers" },
-  { to: "/subscriptions", label: "Subscriptions" },
-  { to: "/settings", label: "Settings" },
 ];
 
 export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {

@@ -328,6 +328,11 @@ ADMIN_COOKIE_NAME=tiffinai_admin
 ADMIN_COOKIE_SAMESITE=lax
 ```
 
+For a frontend hosted on a different site from the backend (including local
+`http://localhost:5173` calling a Railway HTTPS backend), set
+`ADMIN_COOKIE_SAMESITE=none` together with `ADMIN_COOKIE_SECURE=true`. Keep
+`lax` for a same-site local setup where the backend is served locally.
+
 Apply the schema and create the first owner:
 
 ```bash

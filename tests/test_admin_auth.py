@@ -92,6 +92,27 @@ def test_login_me_protected_check_and_logout(db_session, monkeypatch: pytest.Mon
         assert client.get("/admin/protected-check").status_code == 401
 
 
+def test_login_sets_secure_cross_site_cookie_when_configured(db_session, monkeypatch: pytest.MonkeyPatch) -> None:
+    create_admin(db_session)
+    app = build_admin_app(db_session, monkeypatch)
+    monkeypatch.setattr(settings, "ADMIN_COOKIE_SECURE", True)
+    monkeypatch.setattr(settings, "ADMIN_COOKIE_SAMESITE", "none")
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/admin/auth/login",
+            json={"email": "owner@example.com", "password": "StrongPassword1"},
+        )
+
+    set_cookie = response.headers["set-cookie"]
+    assert f"{settings.ADMIN_COOKIE_NAME}=" in set_cookie
+    assert "HttpOnly" in set_cookie
+    assert "Secure" in set_cookie
+    assert "samesite=none" in set_cookie.lower()
+    assert "Path=/" in set_cookie
+    assert "Max-Age=3600" in set_cookie
+
+
 def test_authentication_is_required_and_inactive_admin_cannot_login(db_session, monkeypatch: pytest.MonkeyPatch) -> None:
     inactive = create_admin(db_session, email="inactive@example.com", is_active=False)
     app = build_admin_app(db_session, monkeypatch)

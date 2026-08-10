@@ -3,6 +3,5 @@ export function formatMoney(value: string | number): string {
 }
 
 export function formatOrderDate(value: string): string {
-  return new Intl.DateTimeFormat("en-PK", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  return new Intl.DateTimeFormat("en-PK", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Karachi" }).format(new Date(value));
 }
-

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -98,13 +98,13 @@ describe("OrdersPage", () => {
     await userEvent.click(await screen.findByRole("button", { name: "ORD-100" }));
     expect(await screen.findByRole("dialog", { name: /ORD-100/i })).toHaveTextContent("House 1, Main Street");
     expect(screen.getByText("Chicken Biryani")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Confirm order" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel order" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Start preparing" })).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Confirm order" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(apiMock.patch).toHaveBeenCalledWith("/admin/orders/1/status", { status: "confirmed" }));
-    expect(await screen.findByRole("status")).toHaveTextContent("Confirm order completed.");
+    expect(await screen.findByRole("status")).toHaveTextContent("Confirm completed.");
   });
 
   it("requires confirmation for cancellation and never exposes actions for completed orders", async () => {
@@ -112,9 +112,9 @@ describe("OrdersPage", () => {
     renderOrders();
     await userEvent.click(await screen.findByRole("button", { name: "ORD-100" }));
     await userEvent.click(screen.getByRole("button", { name: "Cancel order" }));
-    expect(screen.getByRole("dialog", { name: "Cancel this order?" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Cancel order ORD-100?" })).toBeInTheDocument();
     expect(apiMock.patch).not.toHaveBeenCalled();
-    await userEvent.click(within(screen.getByRole("dialog", { name: "Cancel this order?" })).getByRole("button", { name: "Cancel order" }));
+    await userEvent.click(within(screen.getByRole("dialog", { name: "Cancel order ORD-100?" })).getByRole("button", { name: "Cancel order" }));
     expect(apiMock.patch).toHaveBeenCalledWith("/admin/orders/1/status", { status: "cancelled" });
 
     apiMock.get.mockImplementation((url: string) => {
@@ -134,7 +134,7 @@ describe("OrdersPage", () => {
       : Promise.reject({ isAxiosError: true, response: { status: 409, data: { detail: "Cannot transition order." } } }));
     renderOrders();
     await userEvent.click(await screen.findByRole("button", { name: "ORD-100" }));
-    await userEvent.click(screen.getByRole("button", { name: "Confirm order" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Cannot transition order.");
 
     await userEvent.selectOptions(screen.getByLabelText("Delivery provider"), "bykea");
@@ -152,10 +152,22 @@ describe("OrdersPage", () => {
     renderOrders();
     expect(await screen.findByRole("heading", { name: /sign in to your dashboard/i })).toBeInTheDocument();
   });
+
+  it("refreshes the order list in the background and cleans up polling", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      setupApi();
+      const rendered = renderOrders();
+      expect(await screen.findAllByText("ORD-100")).not.toHaveLength(0);
+      const initialListCalls = apiMock.get.mock.calls.filter(([url]) => url === "/admin/orders").length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      await waitFor(() => expect(apiMock.get.mock.calls.filter(([url]) => url === "/admin/orders").length).toBe(initialListCalls + 1));
+      rendered.unmount();
+      const callsAfterUnmount = apiMock.get.mock.calls.filter(([url]) => url === "/admin/orders").length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(40_000); });
+      expect(apiMock.get.mock.calls.filter(([url]) => url === "/admin/orders").length).toBe(callsAfterUnmount);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
-
-
-
-
-
-
