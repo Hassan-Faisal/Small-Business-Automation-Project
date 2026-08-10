@@ -497,3 +497,60 @@ def test_classifier_structures_menu_search_examples() -> None:
         assert result.item_name is None
         assert result.quantity is None
         assert result.operation is None
+
+
+def test_explicit_quantity_removal_decrements_named_cart_item(workflow, customer_phone) -> None:
+    run(workflow, "Add 5 Chicken Karahi", "remove-quantity-main", customer_phone)
+    run(workflow, "Add 1 Daal Mash with Naan", "remove-quantity-main", customer_phone)
+    result = run(workflow, "Remove 2 Chicken Karahi from my cart", "remove-quantity-main", customer_phone)
+    assert result["intent"] == "remove_item"
+    assert [(item["name"], item["quantity"]) for item in result["cart"]] == [
+        ("Chicken Karahi", 3),
+        ("Daal Mash with Naan", 1),
+    ]
+    assert "1380.00" in result["response"]
+
+
+def test_natural_language_removal_variants(workflow, customer_phone) -> None:
+    run(workflow, "Add 3 Chicken Karahi", "remove-quantity-one", customer_phone)
+    result = run(workflow, "Remove one Chicken Karahi from my cart", "remove-quantity-one", customer_phone)
+    assert result["cart"][0]["quantity"] == 2
+
+    run(workflow, "Add 1 Chicken Karahi", "remove-whole-line", customer_phone)
+    run(workflow, "Add 1 Daal Mash with Naan", "remove-whole-line", customer_phone)
+    result = run(workflow, "Remove Chicken Karahi from my cart", "remove-whole-line", customer_phone)
+    assert [(item["name"], item["quantity"]) for item in result["cart"]] == [("Daal Mash with Naan", 1)]
+
+    run(workflow, "Add 1 Chicken Karahi", "delete-whole-line", customer_phone)
+    result = run(workflow, "Delete Chicken Karahi from my cart", "delete-whole-line", customer_phone)
+    assert result["cart"] == []
+
+
+def test_natural_language_removal_supports_item_names_and_synonyms(workflow, customer_phone) -> None:
+    run(workflow, "Add 2 Daal Mash with Naan", "remove-daal", customer_phone)
+    result = run(workflow, "Remove 2 Daal Mash with Naan", "remove-daal", customer_phone)
+    assert result["cart"] == []
+
+    run(workflow, "Add 5 Chicken Karahi", "reduce-item", customer_phone)
+    result = run(workflow, "Reduce Chicken Karahi by 2", "reduce-item", customer_phone)
+    assert result["intent"] == "change_quantity"
+    assert result["cart"][0]["quantity"] == 3
+
+    run(workflow, "Add 5 Chicken Karahi", "take-out-item", customer_phone)
+    result = run(workflow, "Take 2 Chicken Karahi out of my cart", "take-out-item", customer_phone)
+    assert result["intent"] == "remove_item"
+    assert result["cart"][0]["quantity"] == 3
+
+
+def test_natural_language_removal_quantity_boundaries(workflow, customer_phone) -> None:
+    run(workflow, "Add 2 Chicken Biryani", "remove-exact", customer_phone)
+    exact = run(workflow, "Remove 2 Chicken Biryani", "remove-exact", customer_phone)
+    assert exact["cart"] == []
+
+    run(workflow, "Add 2 Chicken Biryani", "remove-below-zero", customer_phone)
+    below_zero = run(workflow, "Remove 5 Chicken Biryani", "remove-below-zero", customer_phone)
+    assert below_zero["cart"] == []
+
+    run(workflow, "Add 2 Chicken Biryani", "remove-missing", customer_phone)
+    missing = run(workflow, "Remove 1 Chicken Karahi", "remove-missing", customer_phone)
+    assert [(item["name"], item["quantity"]) for item in missing["cart"]] == [("Chicken Biryani", 2)]

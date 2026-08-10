@@ -129,13 +129,13 @@ def infer_intent(text: str) -> str:
         return "confirm_order"
     if contains_any(normalized, {"clear cart", "clear my cart", "empty cart", "empty my cart", "delete my cart", "cart clear", "cart khali"}):
         return "clear_cart"
+    if contains_any(normalized, {"remove", "delete", "take out"}) or (re.search(r"\btake\b.*\bout\b", normalized) is not None):
+        return "remove_item"
     if contains_any(normalized, {"view cart", "show my cart", "what is in my cart", "what's in my cart", "what is in cart", "what have i ordered", "show cart", "my cart", "cart please", "cart dikhao", "mera cart dikhao", "meri cart dikhao", "cart mein kya hai", "cart me kya hai", "mere cart mein kya hai", "mera cart", "meri cart mai kia hai", "cart check kro"}) or normalized in {"cart", "my cart", "cart please"}:
         return "view_cart"
-    if contains_any(normalized, {"remove", "delete", "take out"}):
-        return "remove_item"
     if contains_any(normalized, {"clear cart", "clear my cart", "empty cart", "empty my cart", "delete my cart", "cart clear", "cart khali"}):
         return "clear_cart"
-    if contains_any(normalized, {"make that", "change quantity", "increase", "decrease", "add one more", "same one again"}):
+    if contains_any(normalized, {"make that", "change quantity", "increase", "decrease", "reduce", "add one more", "same one again"}):
         return "change_quantity"
     if contains_any(normalized, {"add", "order", "i want", "need", "get me", "send me", "chahiye", "cart mein add", "order kar do"}) and not contains_any(normalized, {"cancel", "confirm", "subscription", "plan"}):
         return "add_item"

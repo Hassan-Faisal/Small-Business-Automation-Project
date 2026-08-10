@@ -465,7 +465,7 @@ class OrderConversationWorkflow:
         requested = message_quantity if message_quantity is not None else state.get("classified_quantity")
         operation = str(state.get("cart_operation") or "")
         if not operation:
-            operation = "increment" if ("add one more" in message or "again" in message) else "decrement" if "decrease" in message else "set"
+            operation = "increment" if ("add one more" in message or "again" in message) else "decrement" if ("decrease" in message or "reduce" in message) else "set"
         if requested is None or requested <= 0:
             state["cart"] = cart
             state["last_response"] = "Please tell me the quantity you want."
@@ -549,7 +549,8 @@ class OrderConversationWorkflow:
                     if int(item.get("product_id", 0)) == matches[0].id
                 )
         if target_index is None:
-            if len(cart) == 1 and not item_name and position is None:
+            generic_removal = message in {"remove", "delete", "take out", "remove item", "delete item"}
+            if len(cart) == 1 and not item_name and position is None and generic_removal:
                 target_index = 0
             else:
                 state["cart"] = cart
