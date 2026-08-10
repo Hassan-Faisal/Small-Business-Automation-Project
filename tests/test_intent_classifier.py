@@ -469,3 +469,31 @@ def test_monetary_add_request_defaults_to_one_and_uses_catalog_price(workflow, c
         assert item["quantity"] == (2 if index == 4 else 1)
         assert Decimal(item["unit_price"]) == Decimal("380.00")
         assert Decimal(item["subtotal"]) == Decimal("760.00") if index == 4 else Decimal("380.00")
+
+def test_classifier_structures_purchase_intent_examples() -> None:
+    examples = [
+        ('Order 2 Chicken Karahi', '{"intent":"add_item","item_name":"Chicken Karahi","quantity":2,"operation":"add","confidence":0.98}'),
+        ('I want 2 chicken karahi please', '{"intent":"add_item","item_name":"Chicken Karahi","quantity":2,"operation":"add","confidence":0.98}'),
+        ('Can I get one Chicken Karahi?', '{"intent":"add_item","item_name":"Chicken Karahi","quantity":1,"operation":"add","confidence":0.98}'),
+        ('Give me 2 Chicken Karahi', '{"intent":"add_item","item_name":"Chicken Karahi","quantity":2,"operation":"add","confidence":0.98}'),
+        ('I need Chicken Karahi', '{"intent":"add_item","item_name":"Chicken Karahi","operation":"add","confidence":0.98}'),
+    ]
+    for message, response in examples:
+        result = asyncio.run(StructuredIntentClassifier(FakeLLM(response=response)).classify(message))
+        assert result is not None
+        assert result.intent == 'add_item'
+        assert result.item_name == 'Chicken Karahi'
+        assert result.operation == 'add'
+        assert result.query is None
+
+
+def test_classifier_structures_menu_search_examples() -> None:
+    examples = ['How much is Chicken Karahi?', 'Is Chicken Karahi available?', 'Do you have Chicken Karahi?']
+    for message in examples:
+        result = asyncio.run(StructuredIntentClassifier(FakeLLM(response='{"intent":"search_menu","query":"Chicken Karahi","confidence":0.98}')).classify(message))
+        assert result is not None
+        assert result.intent == 'search_menu'
+        assert result.query == 'Chicken Karahi'
+        assert result.item_name is None
+        assert result.quantity is None
+        assert result.operation is None

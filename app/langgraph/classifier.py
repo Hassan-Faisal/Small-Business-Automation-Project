@@ -86,11 +86,70 @@ human_handoff, unknown.
 Rules:
 - Extract only item name, search query, quantity, meal period, day, order number, and address when present.
 - Ignore prices, database IDs, availability claims, and order status claims.
-- Use multiple_intents=true for requests asking for more than one action.
-- Use unknown and low confidence when unclear.
+- Use multiple_intents=true only when the customer genuinely requests more than one separate action.
+- Use unknown and low confidence when the message is genuinely unclear.
 - Never decide prices, totals, availability, ownership, or cancellation eligibility.
-- For quantity changes, distinguish operation set, increment, decrement, or remove. An explicit removal quantity is decrement; remove is for deleting the whole line.
 
+Intent rules:
+- Use add_item when the customer expresses an intention to order, get, take, buy, add, or have a food item.
+- For add_item:
+  - put the food name in item_name.
+  - extract quantity when stated.
+  - set operation="add".
+  - query should normally be null.
+- Use search_menu only when the customer is asking for information about a food item, such as whether it exists, is available, what it costs, or asking to find/search for it.
+- For search_menu:
+  - put the food being searched for in query.
+  - do not interpret a purchase request as search_menu.
+- Words such as "order", "want", "get me", "give me", "add", "I'll have", "I need", and "can I get" normally indicate add_item when they refer to food.
+- Questions such as "how much is", "do you have", "is available", "find", and "what meals have" normally indicate search_menu.
+- A customer does not need to use the word "order" for add_item.
+- "I want 2 Chicken Karahi" is add_item, not search_menu.
+- "Order 2 Chicken Karahi" is add_item, not search_menu.
+- "Give me 2 Chicken Karahi" is add_item, not search_menu.
+- "I need Chicken Karahi" is add_item, not search_menu.
+- "How much is Chicken Karahi?" is search_menu.
+- "Is Chicken Karahi available?" is search_menu.
+- "Do you have Chicken Karahi?" is search_menu.
+
+For quantity changes:
+- distinguish operation set, increment, decrement, or remove.
+- An explicit removal quantity is decrement.
+- remove is for deleting the entire item from the cart.
+
+Examples:
+
+Customer: "Order 2 Chicken Karahi"
+Output:
+{{"intent":"add_item","item_name":"Chicken Karahi","query":null,"meal_type":null,"quantity":2,"operation":"add","day":null,"order_number":null,"address":null,"confidence":0.98,"multiple_intents":false}}
+
+Customer: "I want 2 chicken karahi please"
+Output:
+{{"intent":"add_item","item_name":"Chicken Karahi","query":null,"meal_type":null,"quantity":2,"operation":"add","day":null,"order_number":null,"address":null,"confidence":0.98,"multiple_intents":false}}
+
+Customer: "Can I get one Chicken Karahi?"
+Output:
+{{"intent":"add_item","item_name":"Chicken Karahi","query":null,"meal_type":null,"quantity":1,"operation":"add","day":null,"order_number":null,"address":null,"confidence":0.96,"multiple_intents":false}}
+
+Customer: "How much is Chicken Karahi?"
+Output:
+{{"intent":"search_menu","item_name":null,"query":"Chicken Karahi","meal_type":null,"quantity":null,"operation":null,"day":null,"order_number":null,"address":null,"confidence":0.98,"multiple_intents":false}}
+
+Customer: "Is Chicken Karahi available?"
+Output:
+{{"intent":"search_menu","item_name":null,"query":"Chicken Karahi","meal_type":null,"quantity":null,"operation":null,"day":null,"order_number":null,"address":null,"confidence":0.98,"multiple_intents":false}}
+
+Customer: "Give me 2 Chicken Karahi"
+Output:
+{{"intent":"add_item","item_name":"Chicken Karahi","query":null,"meal_type":null,"quantity":2,"operation":"add","day":null,"order_number":null,"address":null,"confidence":0.98,"multiple_intents":false}}
+
+Customer: "I need Chicken Karahi"
+Output:
+{{"intent":"add_item","item_name":"Chicken Karahi","query":null,"meal_type":null,"quantity":null,"operation":"add","day":null,"order_number":null,"address":null,"confidence":0.96,"multiple_intents":false}}
+
+Customer: "Do you have Chicken Karahi?"
+Output:
+{{"intent":"search_menu","item_name":null,"query":"Chicken Karahi","meal_type":null,"quantity":null,"operation":null,"day":null,"order_number":null,"address":null,"confidence":0.98,"multiple_intents":false}}
 JSON shape:
 {{"intent":"unknown","item_name":null,"query":null,"meal_type":null,"quantity":null,"operation":null,"day":null,"order_number":null,"address":null,"confidence":0.0,"multiple_intents":false}}
 
