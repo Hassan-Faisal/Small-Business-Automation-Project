@@ -60,6 +60,90 @@ def extract_meal_type(text: str) -> str | None:
     return None
 
 
+DISCOVERY_FILLER_WORDS = {
+    "a", "an", "and", "are", "can", "do", "for", "find", "get", "give", "have", "i", "in", "items", "item", "me", "meals", "meal", "my", "options", "option", "please", "show", "some", "something", "anything", "the", "to", "what", "which", "with", "without", "want", "you", "dishes", "dish", "related",
+}
+CONSTRAINT_BOUNDARY_WORDS = {"for", "on", "from", "please", "today", "tomorrow", "tonight"}
+DISCOVERY_MARKERS = {"show", "find", "which", "options", "what do you have", "do you have", "what options", "what meals", "is available", "available"}
+PURCHASE_MARKERS = {"order", "add", "i will have", "ill have", "give me", "get me", "can i get", "cart mein add", "cart me add"}
+
+
+def _constraint_terms(segment: str) -> list[str]:
+    terms: list[str] = []
+    for token in re.findall(r"[a-z][a-z-]*", normalize_text(segment)):
+        if token in DISCOVERY_FILLER_WORDS or token in CONSTRAINT_BOUNDARY_WORDS or token in {"no", "not", "excluding", "exclude"}:
+            continue
+        if token not in terms:
+            terms.append(token)
+    return terms
+
+
+def extract_search_constraints(text: str) -> dict[str, list[str]]:
+    """Extract reusable text constraints without asserting catalog attributes."""
+    normalized = normalize_text(text)
+    include_terms: list[str] = []
+    exclude_terms: list[str] = []
+
+    negative = re.search(r"\b(?:without|no|excluding|exclude|not)\s+(.+?)(?=\s+(?:for|on|from|please|today|tomorrow|tonight)\b|$)", normalized)
+    if negative:
+        exclude_terms.extend(_constraint_terms(negative.group(1)))
+
+    positive = re.search(r"\bwith\s+(?!no\b|out\b)(.+?)(?=\s+(?:for|on|from|please|today|tomorrow|tonight)\b|$)", normalized)
+    if positive:
+        include_terms.extend(_constraint_terms(positive.group(1)))
+
+    broad = re.search(r"\b(?:something|anything)\s+(.+?)(?=\s+(?:related|for|on|from|please)\b|$)", normalized)
+    if broad:
+        include_terms.extend(_constraint_terms(broad.group(1)))
+
+    exclude_terms = list(dict.fromkeys(exclude_terms))
+    return {
+        "include_terms": [term for term in dict.fromkeys(include_terms) if term not in exclude_terms],
+        "exclude_terms": list(dict.fromkeys(exclude_terms)),
+    }
+
+
+def extract_discovery_query(text: str) -> str:
+    """Return catalog-search terms while leaving exact product resolution to services."""
+    normalized = normalize_text(text)
+    constraints = extract_search_constraints(normalized)
+    excluded = set(constraints["include_terms"] + constraints["exclude_terms"])
+    meal_type = extract_meal_type(normalized)
+    day = extract_day(normalized)
+    context_terms = {term for term in (meal_type, day.lower() if day else None) if term}
+
+    tokens = [
+        token for token in re.findall(r"[a-z][a-z-]*", normalized)
+        if token not in DISCOVERY_FILLER_WORDS
+        and token not in CONSTRAINT_BOUNDARY_WORDS
+        and token not in excluded
+        and token not in context_terms
+        and token not in {"without", "no", "excluding", "exclude", "not"}
+    ]
+    return " ".join(dict.fromkeys(tokens))
+
+
+def is_discovery_request(text: str) -> bool:
+    """Identify catalog discovery without deciding whether a product matches."""
+    normalized = normalize_text(text)
+    constraints = extract_search_constraints(normalized)
+    has_marker = contains_any(normalized, DISCOVERY_MARKERS)
+    is_broad = contains_any(normalized, {"something", "anything"})
+    has_purchase_marker = contains_any(normalized, PURCHASE_MARKERS)
+    # Broad preference requests are discovery unless the customer explicitly
+    # asks to order/add a concrete item.
+    broad_constraint = re.search(r"\b(?:with|without|no|excluding|exclude|not)\b", normalized) is not None
+    return has_marker or (
+        is_broad
+        and not has_purchase_marker
+        and broad_constraint
+    ) or (
+        is_broad
+        and not has_purchase_marker
+        and extract_meal_type(normalized) is not None
+        and not normalized.startswith("i want")
+    )
+
 CURRENCY_MARKER_PATTERN = r"(?:rs\.?|pkr|rupees?|rup(?:ee|ay|aye)s?|\u20a8)"
 MONEY_WORD_PATTERN = r"(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|ek|aik|do|teen|char|chaar|paanch|che|saat|aath|nau|das)(?:\s+hundred)?"
 
@@ -131,6 +215,8 @@ def infer_intent(text: str) -> str:
         return "clear_cart"
     if contains_any(normalized, {"remove", "delete", "take out"}) or (re.search(r"\btake\b.*\bout\b", normalized) is not None):
         return "remove_item"
+    if is_discovery_request(normalized):
+        return "search_menu"
     if contains_any(normalized, {"add", "i want", "want to order", "get me", "give me", "can i get", "i need", "i'll have"}) and not contains_any(normalized, {"cancel", "confirm", "subscription", "plan"}):
         return "add_item"
     if _phrase_in_text(normalized, "order") and normalized not in {"what have i ordered", "where is my order"} and not contains_any(normalized, {"track", "status", "cancel", "confirm"}):
@@ -139,14 +225,20 @@ def infer_intent(text: str) -> str:
         return "view_cart"
     if contains_any(normalized, {"clear cart", "clear my cart", "empty cart", "empty my cart", "delete my cart", "cart clear", "cart khali"}):
         return "clear_cart"
-    if contains_any(normalized, {"make that", "change quantity", "increase", "decrease", "reduce", "add one more", "same one again"}):
-        return "change_quantity"
-    if contains_any(normalized, {"add", "order", "i want", "need", "get me", "send me", "chahiye", "cart mein add", "order kar do"}) and not contains_any(normalized, {"cancel", "confirm", "subscription", "plan"}):
-        return "add_item"
     if contains_any(normalized, {"today's menu", "today menu", "show today's menu", "what is available today", "what can i order today", "available today", "share menu", "menu please", "aaj menu mai kia hai", "aaj ka menu", "what is in menu"}):
         return "today_menu"
     if contains_any(normalized, {"weekly menu", "show weekly menu", "this week's meals", "weekly plan", "what is available this week", "show me the menu", "is haftay ka menu"}):
         return "weekly_menu"
+    if is_discovery_request(normalized):
+        return "search_menu"
+    if extract_quantity(normalized) is not None and contains_any(normalized, {"only", "actually", "just", "meant", "instead", "asked for"}):
+        return "change_quantity"
+    if extract_quantity(normalized) is not None and contains_any(normalized, {"make", "set", "change"}):
+        return "change_quantity"
+    if contains_any(normalized, {"make that", "change quantity", "increase", "decrease", "reduce", "add one more", "same one again"}):
+        return "change_quantity"
+    if contains_any(normalized, {"add", "order", "i want", "need", "get me", "send me", "chahiye", "cart mein add", "order kar do"}) and not contains_any(normalized, {"cancel", "confirm", "subscription", "plan"}):
+        return "add_item"
     if extract_day(text) is not None and _phrase_in_text(normalized, "menu"):
         return "today_menu"
     meal_type = extract_meal_type(normalized)
@@ -179,3 +271,6 @@ def infer_intent(text: str) -> str:
     if contains_any(normalized, {"add", "order", "i want", "need", "get me", "send me", "add item number", "cart mai add kro", "order krna hai", "order karna hai", "chahiye"}):
         return "add_item"
     return "fallback"
+
+
+
