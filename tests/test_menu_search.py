@@ -145,3 +145,65 @@ def test_pending_selection_is_consumed_once(workflow, customer_phone) -> None:
     repeated = run(workflow, "4", "selection-once", customer_phone)
     assert selected["cart"][0]["quantity"] == 1
     assert repeated["cart"][0]["quantity"] == 1
+
+
+def test_purchase_discovery_context_advances_to_explicit_order(workflow, customer_phone) -> None:
+    discovery = run(workflow, "I want something chicken related", "context-purchase-discovery", customer_phone)
+    assert discovery["intent"] == "add_item"
+    assert discovery["cart"] == []
+    assert "1." in discovery["response"]
+
+    ordered = run(workflow, "I want Chicken Qorma", "context-purchase-discovery", customer_phone)
+    assert ordered["intent"] == "add_item"
+    assert [(item["name"], item["quantity"]) for item in ordered["cart"]] == [("Chicken Qorma", 1)]
+
+
+def test_numbered_purchase_selection_uses_pending_add_action(workflow, customer_phone) -> None:
+    discovery = run(workflow, "I want something chicken related", "context-numbered-purchase", customer_phone)
+    selected = run(workflow, "2", "context-numbered-purchase", customer_phone)
+    assert selected["intent"] == "add_item"
+    assert len(selected["cart"]) == 1
+    assert selected["cart"][0]["name"] in discovery["response"]
+
+
+def test_informational_search_selection_does_not_create_order(workflow, customer_phone) -> None:
+    install_classifier(workflow, IntentClassification(intent="search_menu", query="chicken", confidence=0.95))
+    searched = run(workflow, "What chicken meals do you have?", "context-informational-selection", customer_phone)
+    selected = run(workflow, "2", "context-informational-selection", customer_phone)
+    assert searched["intent"] == "search_menu"
+    assert selected["intent"] == "search_menu"
+    assert selected["cart"] == []
+    assert "would you like to add" in selected["response"].lower()
+    assert "meals matching" not in selected["response"].lower()
+
+
+def test_explicit_add_overrides_stale_menu_search_context(workflow, customer_phone) -> None:
+    install_classifier(workflow, IntentClassification(intent="search_menu", query="chicken", confidence=0.95))
+    run(workflow, "What chicken meals do you have?", "context-explicit-override", customer_phone)
+    added = run(workflow, "Add Chicken Qorma to my cart", "context-explicit-override", customer_phone)
+    assert added["intent"] == "add_item"
+    assert [(item["name"], item["quantity"]) for item in added["cart"]] == [("Chicken Qorma", 1)]
+
+
+def test_contextual_second_option_can_be_added(workflow, customer_phone) -> None:
+    install_classifier(workflow, IntentClassification(intent="search_menu", query="chicken", confidence=0.95))
+    searched = run(workflow, "Show me chicken meals", "context-second-add", customer_phone)
+    added = run(workflow, "Add the second one", "context-second-add", customer_phone)
+    assert added["intent"] == "add_item"
+    assert len(added["cart"]) == 1
+    assert added["cart"][0]["name"] in searched["response"]
+
+
+def test_ambiguous_contextual_add_requests_clarification(workflow, customer_phone) -> None:
+    install_classifier(workflow, IntentClassification(intent="search_menu", query="chicken", confidence=0.95))
+    run(workflow, "Show chicken meals", "context-ambiguous-add", customer_phone)
+    result = run(workflow, "Add that", "context-ambiguous-add", customer_phone)
+    assert result["intent"] == "fallback"
+    assert result["cart"] == []
+    assert "which meal" in result["response"].lower()
+
+
+def test_direct_order_without_prior_search_adds_quantity(workflow, customer_phone) -> None:
+    result = run(workflow, "I need 2 Chicken Qorma", "context-direct-order", customer_phone)
+    assert result["intent"] == "add_item"
+    assert [(item["name"], item["quantity"]) for item in result["cart"]] == [("Chicken Qorma", 2)]

@@ -71,3 +71,5 @@ class ConversationState(TypedDict, total=False):
     clarification_response: str | None
     cart_operation: str | None
     cart_view_mode: str | None
+    pending_action: str | None
+    selected_menu_option: dict[str, object] | None

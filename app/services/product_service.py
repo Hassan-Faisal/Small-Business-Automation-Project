@@ -11,7 +11,7 @@ from app.models.meal_offering import MealOffering
 from app.models.product import Product
 
 
-PRODUCT_QUERY_STOP_WORDS = {"a", "an", "and", "are", "can", "chahiye", "chahye", "do", "dain", "dena", "for", "get", "give", "i", "in", "mein", "me", "mujhe", "mujhay", "my", "order", "please", "kar", "karo", "karna", "add", "want", "would", "you", "the", "to", "one", "two", "three", "meal", "meals", "dish", "dishes"}
+PRODUCT_QUERY_STOP_WORDS = {"a", "an", "and", "are", "can", "chahiye", "chahye", "do", "dain", "dena", "for", "get", "give", "i", "in", "mein", "me", "mujhe", "mujhay", "my", "order", "please", "kar", "karo", "karna", "add", "want", "would", "you", "the", "to", "one", "two", "three", "meal", "meals", "dish", "dishes", "something", "related", "kind", "type", "food"}
 class ProductService:
     def __init__(self, db: Session):
         self.db = db

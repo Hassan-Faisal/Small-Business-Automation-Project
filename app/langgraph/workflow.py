@@ -107,6 +107,11 @@ class OrderConversationWorkflow:
         if isinstance(options, list) and options:
             assistant_message["options"] = options
             assistant_message["context_type"] = str(state.get("displayed_context_type") or "")
+            pending_action = str(state.get('pending_action') or '')
+            if not pending_action:
+                pending_action = 'add_item' if str(state.get('displayed_context_type') or '') in {'add_item', 'menu'} else 'search_menu' if str(state.get('displayed_context_type') or '') == 'menu_search' else ''
+            if pending_action:
+                assistant_message['pending_action'] = pending_action
         clarification = state.get("pending_clarification")
         if isinstance(clarification, dict):
             assistant_message["clarification"] = clarification
@@ -122,6 +127,13 @@ class OrderConversationWorkflow:
                     return str(message.get("context_type") or "") or None, list(message.get("options") or [])
                 return None, []
         return None, []
+
+    def _message_pending_action(self, messages: list[dict[str, Any]]) -> str | None:
+        for message in reversed(messages):
+            if message.get('role') == 'assistant':
+                action = message.get('pending_action')
+                return str(action) if action else None
+        return None
 
     def _message_clarification(self, messages: list[dict[str, Any]]) -> dict[str, Any] | None:
         for message in reversed(messages):
@@ -144,7 +156,7 @@ class OrderConversationWorkflow:
         if context_type in {"add_item", "menu_search"}:
             for option in options:
                 label = normalize_text(str(option.get("label") or option.get("name") or ""))
-                if label and (normalized_message == label or label in normalized_message):
+                if label and normalized_message == label:
                     return option
 
         if context_type == "menu_day":
@@ -203,10 +215,13 @@ class OrderConversationWorkflow:
         intent_confidence = 1.0 if intent != "fallback" else 0.0
         pending_context, pending_options = self._message_options(list(memory_state.get("messages", [])))
         pending_clarification = self._message_clarification(list(memory_state.get("messages", [])))
+        pending_action = self._message_pending_action(list(memory_state.get("messages", [])))
         selection_rejected = False
         selected = self._resolve_context_option(memory_state, message)
-        if pending_context == "add_item" and pending_options and pending_clarification is not None and selected is None:
-            if extract_position_reference(message) is not None or normalize_text(message).isdigit() or infer_intent(message) == "fallback":
+        if pending_options and selected is None and (pending_context == "menu_search" or (pending_context == "add_item" and pending_clarification is not None)):
+            normalized_message = normalize_text(message)
+            is_demonstrative_reference = any(token in normalized_message.split() for token in {"that", "this", "it", "one"})
+            if extract_position_reference(message) is not None or normalized_message.isdigit() or infer_intent(message) == "fallback" or (intent == "add_item" and is_demonstrative_reference):
                 state["pending_clarification"] = pending_clarification
                 state["displayed_options"] = pending_options
                 state["displayed_context_type"] = "add_item"
@@ -214,6 +229,11 @@ class OrderConversationWorkflow:
                 lines.extend(f"{index}. {option.get('name') or option.get('label')} ({self._price(option.get('price') or 0)})" for index, option in enumerate(pending_options, start=1))
                 lines.append("Reply with a number or exact meal name to add it.")
                 state["clarification_response"] = "\\n".join(lines)
+                if pending_context == "menu_search":
+                    state["clarification_response"] = "Which meal would you like to add? Reply with a number or exact meal name."
+                state["pending_action"] = "add_item" if pending_context == "add_item" or intent == "add_item" else "search_menu"
+                selection_rejected = True
+                intent = "fallback"
                 selection_rejected = True
         if selected is not None:
             context_type, _ = self._message_options(list(memory_state.get("messages", [])))
@@ -230,8 +250,15 @@ class OrderConversationWorkflow:
                 if clarification is not None:
                     state["pending_clarification"] = clarification
             elif context_type == "menu_search":
-                intent = "search_menu"
-                state["classified_query"] = str(selected.get("name") or selected.get("label") or "")
+                if intent in {"add_item", "remove_item", "change_quantity"} or pending_action == "add_item":
+                    state["pending_menu_option"] = selected
+                    state["pending_clarification"] = {"type": "product_selection", "operation": "add", "quantity": int(state.get("classified_quantity") or 1)}
+                    state["pending_action"] = "add_item"
+                    intent = "add_item"
+                else:
+                    intent = "search_menu"
+                    state["selected_menu_option"] = selected
+                    state["classified_query"] = str(selected.get("name") or selected.get("label") or "")
             elif context_type == "menu_day":
                 intent = "today_menu"
                 state["selected_menu_day"] = str(selected.get("day") or "")
@@ -353,6 +380,7 @@ class OrderConversationWorkflow:
             options = [{"label": product.name, "name": product.name, "price": str(product.price)} for product in matches]
             state["displayed_options"] = options
             state["displayed_context_type"] = "add_item"
+            state["pending_action"] = "add_item"
             requested_quantity = state.get("classified_quantity")
             if requested_quantity is None:
                 requested_quantity = extract_quantity(str(state.get("last_user_message", "")))
@@ -388,6 +416,7 @@ class OrderConversationWorkflow:
         state["pending_clarification"] = None
         state["displayed_options"] = []
         state["displayed_context_type"] = ""
+        state["pending_action"] = None
         state["last_response"] = f"Done! {product.name} has been added to your cart.\nCart subtotal: {self._price(calculate_cart_total(updated_cart))}\n\nWant to add anything else?"
         return state
 
@@ -395,6 +424,17 @@ class OrderConversationWorkflow:
         query = str(state.get("classified_query") or state.get("classified_item_name") or "").strip()
         if not query or self.meal_service is None:
             state["last_response"] = "Please tell me what food or meal you want me to find."
+            return state
+        selected_option = state.get("selected_menu_option")
+        if isinstance(selected_option, dict):
+            selected_name = str(selected_option.get("name") or selected_option.get("label") or "meal")
+            selected_price = self._price(selected_option.get("price") or 0)
+            state["selected_menu_option"] = None
+            state["displayed_options"] = []
+            state["displayed_context_type"] = ""
+            state["pending_action"] = None
+            state["cart"] = list(self._load_context(str(state.get("conversation_id", "default"))).get("cart", []))
+            state["last_response"] = f"{selected_name} is available for {selected_price}. Would you like to add it to your cart?"
             return state
         message = str(state.get("last_user_message", ""))
         day = state.get("classified_day") or extract_day(message)
@@ -412,6 +452,7 @@ class OrderConversationWorkflow:
         options = [{"label": item.name, "name": item.name, "price": str(item.price), "day": item.day_of_week, "meal_type": item.meal_type} for item in matches]
         state["displayed_options"] = options
         state["displayed_context_type"] = "menu_search"
+        state["pending_action"] = "search_menu"
         lines = [f"Meals matching {query}:"]
         lines.extend(f"{index}. {item.name} ({self._price(item.price)})" for index, item in enumerate(matches, start=1))
         lines.append("Reply with a number or meal name to see that result again.")

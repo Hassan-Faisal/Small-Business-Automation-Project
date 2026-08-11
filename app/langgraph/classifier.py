@@ -92,6 +92,7 @@ Rules:
 
 Intent rules:
 - Use add_item when the customer expresses an intention to order, get, take, buy, add, or have a food item.
+- Broad purchase discovery, such as wanting something from a food category, is still add_item: preserve the purchase action while using the category to find candidate meals.
 - For add_item:
   - put the food name in item_name.
   - extract quantity when stated.
