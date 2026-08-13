@@ -565,7 +565,7 @@ class OrderConversationWorkflow:
                 product for item in cart
                 if (product := self.product_service.retrieve_product_by_id(int(item.get("product_id", 0)))) is not None
             ]
-            query = str(item_name) if item_name else re.sub(r"\b(?:make|set|change|quantity|to|only|actually|just|instead|asked|for|i|meant|it|that)\b|\b\d+\b", " ", message).strip()
+            query = str(item_name) if item_name else re.sub(r"\b(?:make|set|change|quantity|to|only|actually|just|instead|asked|for|i|meant|it|that|remove|delete|take|out|from|my|mery|order|cart|mein|mai|sai|se|hata|do|kar|kr)\b|\b\d+\b", " ", message).strip()
             matches = self._resolve_products(message, item_name=query, candidates=cart_products)
             if len(matches) > 1:
                 state["cart"] = cart
@@ -660,7 +660,7 @@ class OrderConversationWorkflow:
                 product for item in cart
                 if (product := self.product_service.retrieve_product_by_id(int(item.get("product_id", 0)))) is not None
             ]
-            query = str(item_name) if item_name else re.sub(r"\b(?:make|set|change|quantity|to|only|actually|just|instead|asked|for|i|meant|it|that)\b|\b\d+\b", " ", message).strip()
+            query = str(item_name) if item_name else re.sub(r"\b(?:make|set|change|quantity|to|only|actually|just|instead|asked|for|i|meant|it|that|remove|delete|take|out|from|my|mery|order|cart|mein|mai|sai|se|hata|do|kar|kr)\b|\b\d+\b", " ", message).strip()
             matches = self._resolve_products(message, item_name=query, candidates=cart_products)
             if len(matches) > 1:
                 state["cart"] = cart
@@ -1059,6 +1059,7 @@ class OrderConversationWorkflow:
         if message_id and not self.memory.has_processed_message(conversation_id, message_id):
             self.memory.mark_processed_message(conversation_id, message_id)
         return {"response": self._reply(result.get("last_response")), "intent": result.get("intent", "fallback"), "intent_source": result.get("intent_source", "fallback"), "intent_confidence": result.get("intent_confidence", 0.0), "cart": result.get("cart", []), "address": result.get("address"), "order_number": result.get("order_number"), "order_status": result.get("order_status"), "messages": result.get("messages", []), "retrieved_context": result.get("retrieved_context", "")}
+
 
 
 

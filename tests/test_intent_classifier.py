@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import pytest
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -554,3 +555,38 @@ def test_natural_language_removal_quantity_boundaries(workflow, customer_phone) 
     run(workflow, "Add 2 Chicken Biryani", "remove-missing", customer_phone)
     missing = run(workflow, "Remove 1 Chicken Karahi", "remove-missing", customer_phone)
     assert [(item["name"], item["quantity"]) for item in missing["cart"]] == [("Chicken Biryani", 2)]
+
+@pytest.mark.parametrize("message", [
+    "remove everything",
+    "remove all",
+    "remove all items",
+    "clear my cart",
+    "empty my cart",
+    "sab kuch remove kar do",
+    "sab kuch delete kar do",
+    "sb kuch delete kr do mery order mai sai",
+])
+def test_clear_cart_natural_language_variants(workflow, customer_phone, message: str) -> None:
+    run(workflow, "Add 6 Aloo Paratha with Raita", f"clear-cart-{message}", customer_phone)
+    result = run(workflow, message, f"clear-cart-{message}", customer_phone)
+    assert result["intent"] == "clear_cart"
+    assert result["cart"] == []
+    assert "cleared" in result["response"].lower()
+
+
+def test_partial_cart_item_name_removes_unambiguous_item(workflow, customer_phone) -> None:
+    run(workflow, "Add 6 Aloo Paratha with Raita", "remove-partial-aloo", customer_phone)
+    result = run(workflow, "remove aloo paratha from my cart", "remove-partial-aloo", customer_phone)
+    assert result["intent"] == "remove_item"
+    assert result["cart"] == []
+
+
+def test_partial_cart_item_name_preserves_ambiguity(workflow, customer_phone) -> None:
+    run(workflow, "Add 1 Chicken Karahi", "remove-partial-ambiguous", customer_phone)
+    run(workflow, "Add 1 Chicken Biryani", "remove-partial-ambiguous", customer_phone)
+    result = run(workflow, "remove chicken from my cart", "remove-partial-ambiguous", customer_phone)
+    assert result["intent"] == "remove_item"
+    assert len(result["cart"]) == 2
+    assert "more than one" in result["response"].lower()
+
+

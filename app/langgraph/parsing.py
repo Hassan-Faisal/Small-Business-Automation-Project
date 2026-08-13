@@ -214,7 +214,8 @@ def infer_intent(text: str) -> str:
         return "provide_address"
     if contains_any(normalized, {"confirm order", "order confirm", "confirm my order", "confirm the order", "place order", "place my order", "checkout", "proceed", "proceed with order", "mera order confirm kar do", "mera order confirm karo", "mera order confirm kro", "order confirm kar do", "order confirm karo", "order confirm kro", "mera order place kar do", "mera order place karo"}) or normalized in {"confirm", "yes"}:
         return "confirm_order"
-    if contains_any(normalized, {"clear cart", "clear my cart", "empty cart", "empty my cart", "delete my cart", "cart clear", "cart khali"}):
+    clear_all = contains_any(normalized, {"remove everything", "remove all", "remove all items", "delete everything", "delete all", "delete all items", "sab kuch remove", "sab kuch delete", "sb kuch remove", "sb kuch delete", "sab kuch hata", "sb kuch hata"}) or bool(re.search(r"\b(?:sab|sb)\s+kuch\b.*\b(?:remove|delete|hata|nikal)\b", normalized))
+    if clear_all or contains_any(normalized, {"clear cart", "clear my cart", "empty cart", "empty my cart", "delete my cart", "cart clear", "cart khali"}):
         return "clear_cart"
     if contains_any(normalized, {"remove", "delete", "take out"}) or (re.search(r"\btake\b.*\bout\b", normalized) is not None):
         return "remove_item"
@@ -278,6 +279,8 @@ def infer_intent(text: str) -> str:
     if contains_any(normalized, {"add", "order", "i want", "need", "get me", "send me", "add item number", "cart mai add kro", "order krna hai", "order karna hai", "chahiye"}):
         return "add_item"
     return "fallback"
+
+
 
 
 
