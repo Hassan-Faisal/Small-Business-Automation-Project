@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import pytest
 
 from app.langgraph.classifier import IntentClassification
 
@@ -207,3 +208,147 @@ def test_direct_order_without_prior_search_adds_quantity(workflow, customer_phon
     result = run(workflow, "I need 2 Chicken Qorma", "context-direct-order", customer_phone)
     assert result["intent"] == "add_item"
     assert [(item["name"], item["quantity"]) for item in result["cart"]] == [("Chicken Qorma", 2)]
+
+
+def test_constraint_and_discovery_searches_do_not_mutate_cart(workflow, customer_phone) -> None:
+    vegetables = run(workflow, "Show me some items with vegetables", "constraint-vegetables", customer_phone)
+    assert vegetables["intent"] == "search_menu"
+    assert vegetables["cart"] == []
+    assert "vegetable" in vegetables["response"].lower()
+
+    chicken = run(workflow, "What chicken options do you have?", "constraint-chicken", customer_phone)
+    assert chicken["intent"] == "search_menu"
+    assert chicken["cart"] == []
+    assert "chicken" in chicken["response"].lower()
+
+    dinner = run(workflow, "Find something for dinner", "constraint-dinner", customer_phone)
+    assert dinner["intent"] == "search_menu"
+    assert dinner["cart"] == []
+
+
+def test_purchase_discovery_constraints_use_catalog_candidates(workflow, customer_phone) -> None:
+    result = run(workflow, "I want to order something without vegetables", "constraint-negative-purchase", customer_phone)
+    assert result["intent"] == "add_item"
+    assert result["cart"] == []
+    assert "1." in result["response"] or "catalog" in result["response"].lower()
+
+    unsupported = run(workflow, "I want something vegetarian", "constraint-unsupported", customer_phone)
+    assert unsupported["cart"] == []
+    assert "catalog" in unsupported["response"].lower() or "could not" in unsupported["response"].lower()
+
+
+def test_contextual_quantity_corrections_resolve_recent_unambiguous_item(workflow, customer_phone) -> None:
+    run(workflow, "Add 3 Chicken Qorma", "correction-one", customer_phone)
+    corrected = run(workflow, "I asked for one only", "correction-one", customer_phone)
+    assert corrected["intent"] == "change_quantity"
+    assert corrected["cart"][0]["quantity"] == 1
+
+    run(workflow, "Add 3 Chicken Qorma", "correction-make", customer_phone)
+    corrected = run(workflow, "make that one", "correction-make", customer_phone)
+    assert corrected["cart"][0]["quantity"] == 1
+
+    run(workflow, "Add 1 Chicken Qorma", "correction-actually", customer_phone)
+    corrected = run(workflow, "actually make it 2", "correction-actually", customer_phone)
+    assert corrected["cart"][0]["quantity"] == 2
+
+
+def test_ambiguous_contextual_correction_does_not_mutate_cart(workflow, customer_phone) -> None:
+    run(workflow, "Add 1 Chicken Qorma", "correction-ambiguous", customer_phone)
+    run(workflow, "Add 1 Chicken Karahi", "correction-ambiguous", customer_phone)
+    result = run(workflow, "make that one", "correction-ambiguous", customer_phone)
+    assert result["intent"] == "change_quantity"
+    assert [(item["name"], item["quantity"]) for item in result["cart"]] == [
+        ("Chicken Qorma", 1),
+        ("Chicken Karahi", 1),
+    ]
+    assert "which cart item" in result["response"].lower()
+
+
+def test_explicit_named_quantity_correction_resolves_cart_item(workflow, customer_phone) -> None:
+    run(workflow, "Add 1 Chicken Karahi", "correction-explicit", customer_phone)
+    result = run(workflow, "Make Chicken Karahi 2", "correction-explicit", customer_phone)
+    assert result["intent"] == "change_quantity"
+    assert result["cart"][0]["quantity"] == 2
+
+
+def test_replaying_same_message_id_does_not_mutate_cart_twice(workflow, customer_phone) -> None:
+    first = asyncio.run(workflow.run("Give me 2 Chicken Qorma", conversation_id="replay-cart", customer_phone=customer_phone, message_id="replay-1"))
+    second = asyncio.run(workflow.run("Give me 2 Chicken Qorma", conversation_id="replay-cart", customer_phone=customer_phone, message_id="replay-1"))
+    assert first["cart"] == second["cart"]
+    assert first["cart"][0]["quantity"] == 2
+    assert second["intent"] == "fallback"
+
+def test_broad_negative_preference_is_discovery_without_cart_mutation(workflow, customer_phone) -> None:
+    result = run(workflow, "I want something without vegetables", "constraint-discovery", customer_phone)
+    assert result["intent"] == "search_menu"
+    assert result["cart"] == []
+    assert "catalog" in result["response"].lower() or "meals matching" in result["response"].lower()
+
+
+def test_search_then_purchase_and_purchase_then_search_keep_turn_semantics(workflow, customer_phone) -> None:
+    searched = run(workflow, "What chicken options do you have?", "state-transitions", customer_phone)
+    assert searched["intent"] == "search_menu"
+    assert searched["cart"] == []
+
+    purchased = run(workflow, "I want to order Chicken Qorma", "state-transitions", customer_phone)
+    assert purchased["intent"] == "add_item"
+    assert [(item["name"], item["quantity"]) for item in purchased["cart"]] == [("Chicken Qorma", 1)]
+
+    searched_again = run(workflow, "Find something for dinner", "state-transitions", customer_phone)
+    assert searched_again["intent"] == "search_menu"
+    assert [(item["name"], item["quantity"]) for item in searched_again["cart"]] == [("Chicken Qorma", 1)]
+
+@pytest.mark.parametrize("message", [
+    "aaj menu mai kia hai?",
+    "aaj khanay mai kia hai?",
+    "aaj kya khana hai?",
+])
+def test_menu_variants_always_receive_a_reply(workflow, customer_phone, message) -> None:
+    class NoClassifier:
+        confidence_threshold = 0.78
+
+        async def classify(self, message: str) -> None:
+            raise AssertionError("deterministic menu requests must not invoke the classifier")
+
+    workflow.classifier = NoClassifier()  # type: ignore[assignment]
+    result = run(workflow, message, f"menu-variant-{message}", customer_phone)
+    assert result["intent"] == "today_menu"
+    assert result["response"].strip()
+
+
+@pytest.mark.parametrize("message", [
+    "Aloo Paratha with Raita order kar do",
+    "aloo paratha raita ke sath kar do",
+    "I want Aloo Paratha with Raita",
+])
+def test_aloo_paratha_order_variants_receive_a_reply(workflow, customer_phone, message) -> None:
+    result = run(workflow, message, f"aloo-order-{message}", customer_phone)
+    assert result["intent"] == "add_item"
+    assert result["response"].strip()
+    if result["cart"]:
+        assert result["cart"][0]["name"] == "Aloo Paratha with Raita"
+
+
+def test_llm_classified_constraints_are_forwarded_to_catalog(workflow, customer_phone, seeded_tiffin_catalog) -> None:
+    classification = IntentClassification(
+        intent="search_menu",
+        query="chicken",
+        include_terms=["chicken"],
+        exclude_terms=["biryani"],
+        confidence=0.95,
+    )
+    install_classifier(workflow, classification)
+    result = run(workflow, "could you find chicken meals", "llm-constraints", customer_phone)
+    expected = seeded_tiffin_catalog.search_meal_offerings(
+        "chicken", include_terms=["chicken"], exclude_terms=["biryani"]
+    )
+    assert expected
+    assert result["intent"] == "search_menu"
+    assert all(item.name in result["response"] for item in expected)
+    assert "biryani" not in result["response"].lower()
+
+
+def test_intent_classification_constraint_defaults_are_empty() -> None:
+    result = IntentClassification(intent="search_menu", query="chicken", confidence=0.95)
+    assert result.include_terms == []
+    assert result.exclude_terms == []

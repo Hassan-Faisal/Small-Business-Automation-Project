@@ -40,6 +40,8 @@ class IntentClassification(BaseModel):
     address: str | None = Field(default=None, max_length=500)
     confidence: float = Field(ge=0.0, le=1.0)
     multiple_intents: bool = False
+    include_terms: list[str] = Field(default_factory=list, max_length=20)
+    exclude_terms: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator("day")
     @classmethod
@@ -84,7 +86,7 @@ policy_question, delivery_area, delivery_timing, payment_methods,
 human_handoff, unknown.
 
 Rules:
-- Extract only item name, search query, quantity, meal period, day, order number, and address when present.
+- Extract only item name, search query, quantity, meal period, day, order number, address, and reusable include/exclude search terms when present.
 - Ignore prices, database IDs, availability claims, and order status claims.
 - Use multiple_intents=true only when the customer genuinely requests more than one separate action.
 - Use unknown and low confidence when the message is genuinely unclear.
@@ -99,6 +101,7 @@ Intent rules:
   - set operation="add".
   - query should normally be null.
 - Use search_menu only when the customer is asking for information about a food item, such as whether it exists, is available, what it costs, or asking to find/search for it.
+- For discovery constraints, put terms after "with" in include_terms and terms after "without", "no", or "excluding" in exclude_terms. Do not claim a property unless catalog data establishes it.
 - For search_menu:
   - put the food being searched for in query.
   - do not interpret a purchase request as search_menu.
@@ -222,3 +225,4 @@ Customer message: {message}
                 "latency_ms": round((time.perf_counter() - started) * 1000, 2),
             })
             return None
+

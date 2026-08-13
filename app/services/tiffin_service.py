@@ -86,13 +86,29 @@ class TiffinCatalogService:
         *,
         day_of_week: str | None = None,
         meal_type: str | None = None,
+        include_terms: list[str] | None = None,
+        exclude_terms: list[str] | None = None,
     ) -> list[MealOffering]:
-        """Find active catalog items using conservative token matching."""
+        """Find active catalog items using names/descriptions and optional constraints."""
         query_tokens = [self._search_token(token) for token in query.split()]
         query_tokens = [token for token in query_tokens if token]
-        if not query_tokens:
+        include_tokens = [self._search_token(term) for term in (include_terms or []) if self._search_token(term)]
+        exclude_tokens = [self._search_token(term) for term in (exclude_terms or []) if self._search_token(term)]
+        if not query_tokens and not include_tokens and not exclude_tokens and day_of_week is None and meal_type is None:
             return []
         offerings = self.list_meal_offerings(day_of_week=day_of_week, meal_type=meal_type, active_only=True)
+        if include_tokens or exclude_tokens:
+            constrained: list[MealOffering] = []
+            for offering in offerings:
+                offering_text = self._search_token(f"{offering.name} {offering.description or ''}")
+                if include_tokens and not all(token in offering_text for token in include_tokens):
+                    continue
+                if exclude_tokens and any(token in offering_text for token in exclude_tokens):
+                    continue
+                constrained.append(offering)
+            offerings = constrained
+        if not query_tokens:
+            return offerings
         scored: list[tuple[float, MealOffering]] = []
         for offering in offerings:
             name_tokens = [self._search_token(token) for token in offering.name.split()]
@@ -113,7 +129,6 @@ class TiffinCatalogService:
             if highest - score <= 0.06:
                 unique.setdefault(self._search_token(offering.name), offering)
         return list(unique.values())
-
 
     def format_daily_menu(self, day_of_week: str) -> str:
         menu = self.list_daily_menu(day_of_week)

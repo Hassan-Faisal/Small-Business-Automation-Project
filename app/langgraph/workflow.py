@@ -300,14 +300,14 @@ class OrderConversationWorkflow:
                 state["classified_day"] = classification.day
                 state["classified_order_number"] = classification.order_number
                 state["classified_address"] = classification.address
-                state["classified_include_terms"] = classification.include_terms
-                state["classified_exclude_terms"] = classification.exclude_terms
+                state["classified_include_terms"] = list(getattr(classification, "include_terms", []) or [])
+                state["classified_exclude_terms"] = list(getattr(classification, "exclude_terms", []) or [])
                 if classification.multiple_intents:
                     intent = "fallback"
                     state["clarification_response"] = "I can help with one action at a time. Would you like to see the menu, or add an item first?"
             elif classification is not None:
                 logger.info("classifier_result_rejected", extra={"event": "classifier_result_rejected", "reason": "confidence_below_threshold", "intent": classification.intent, "confidence": classification.confidence, "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
-        deterministic_constraints = extract_search_constraints(message)
+        deterministic_constraints = self._merge_search_constraints(message, state)
         if deterministic_intent == "search_menu" and (deterministic_constraints["include_terms"] or deterministic_constraints["exclude_terms"]):
             intent = "search_menu"
             state["classified_query"] = state.get("classified_query") or extract_discovery_query(message)
@@ -382,10 +382,31 @@ class OrderConversationWorkflow:
             query = item_name or message
         return self.product_service.resolve_available_products(query, candidates=candidates)
 
-    def _discover_meal_offerings(self, message: str, query: str | None = None) -> tuple[str, dict[str, list[str]], list[Any]]:
+    @staticmethod
+    def _merge_search_constraints(
+        message: str,
+        state: ConversationState | None = None,
+    ) -> dict[str, list[str]]:
+        parsed = extract_search_constraints(message)
+        state = state or {}
+        include_terms = list(parsed["include_terms"])
+        exclude_terms = list(parsed["exclude_terms"])
+        for key, target in (("classified_include_terms", include_terms), ("classified_exclude_terms", exclude_terms)):
+            values = state.get(key, [])
+            if isinstance(values, list):
+                target.extend(str(value).strip().lower() for value in values if str(value).strip())
+        exclude_terms = list(dict.fromkeys(exclude_terms))
+        include_terms = [term for term in dict.fromkeys(include_terms) if term not in exclude_terms]
+        return {"include_terms": include_terms, "exclude_terms": exclude_terms}
+    def _discover_meal_offerings(
+        self,
+        message: str,
+        query: str | None = None,
+        state: ConversationState | None = None,
+    ) -> tuple[str, dict[str, list[str]], list[Any]]:
         if self.meal_service is None:
             return "", {"include_terms": [], "exclude_terms": []}, []
-        constraints = extract_search_constraints(message)
+        constraints = self._merge_search_constraints(message, state)
         search_query = (query or extract_discovery_query(message)).strip()
         day = extract_day(message)
         meal_type = extract_meal_type(message)
@@ -405,7 +426,11 @@ class OrderConversationWorkflow:
         pending_clarification = state.get("pending_clarification") if isinstance(state.get("pending_clarification"), dict) else None
         matches = self._resolve_products(str(state.get("last_user_message", "")), pending_option, state.get("classified_item_name"))
         if not matches:
-            discovery_query, constraints, discovered = self._discover_meal_offerings(str(state.get("last_user_message", "")), state.get("classified_item_name"))
+            discovery_query, constraints, discovered = self._discover_meal_offerings(
+                str(state.get("last_user_message", "")),
+                state.get("classified_item_name"),
+                state,
+            )
             if discovered:
                 options = [{"label": offering.name, "name": offering.name, "price": str(offering.price)} for offering in discovered]
                 state["displayed_options"] = options
@@ -472,7 +497,9 @@ class OrderConversationWorkflow:
     async def _search_menu(self, state: ConversationState) -> ConversationState:
         message = str(state.get("last_user_message", ""))
         query = str(state.get("classified_query") or state.get("classified_item_name") or extract_discovery_query(message)).strip()
-        constraints = extract_search_constraints(message)
+        if query.lower() in {"item", "items", "meal", "meals", "option", "options"}:
+            query = ""
+        constraints = self._merge_search_constraints(message, state)
         if self.meal_service is None:
             state["last_response"] = "Please tell me what food or meal you want me to find."
             return state
@@ -498,7 +525,8 @@ class OrderConversationWorkflow:
                 scope += f" on {day}"
             if meal_type:
                 scope += f" during {meal_type}"
-            description = query or ("your requested constraints" if constraints["include_terms"] or constraints["exclude_terms"] else scope.strip() or "that request")
+            constraint_description = " ".join(constraints["include_terms"] + constraints["exclude_terms"])
+            description = query or constraint_description or (scope.strip() or "that request")
             state["last_response"] = f"I could not find any available meals matching {description}{scope if query else ""}."
             return state
         options = [{"label": item.name, "name": item.name, "price": str(item.price), "day": item.day_of_week, "meal_type": item.meal_type} for item in matches]
@@ -1026,11 +1054,13 @@ class OrderConversationWorkflow:
         memory_state = self._load_context(conversation_id)
         if message_id and self.memory.has_processed_message(conversation_id, message_id):
             return {"response": self._reply(memory_state.get("last_response")), "intent": "fallback", "cart": list(memory_state.get("cart", [])), "address": memory_state.get("address"), "order_number": memory_state.get("order_number"), "order_status": memory_state.get("order_status"), "messages": list(memory_state.get("messages", [])), "retrieved_context": ""}
-        initial_state: ConversationState = {"messages": list(memory_state.get("messages", [])), "last_user_message": message, "cart": list(memory_state.get("cart", [])), "address": memory_state.get("address"), "order_number": memory_state.get("order_number"), "order_status": memory_state.get("order_status"), "conversation_id": conversation_id, "customer_phone": customer_phone or str(memory_state.get("customer_phone") or ""), "message_id": message_id, "retrieved_context": "", "error": None}
+        initial_state: ConversationState = {"classified_include_terms": [], "classified_exclude_terms": [], "messages": list(memory_state.get("messages", [])), "last_user_message": message, "cart": list(memory_state.get("cart", [])), "address": memory_state.get("address"), "order_number": memory_state.get("order_number"), "order_status": memory_state.get("order_status"), "conversation_id": conversation_id, "customer_phone": customer_phone or str(memory_state.get("customer_phone") or ""), "message_id": message_id, "retrieved_context": "", "error": None}
         result = await self.graph.ainvoke(initial_state)
         if message_id and not self.memory.has_processed_message(conversation_id, message_id):
             self.memory.mark_processed_message(conversation_id, message_id)
         return {"response": self._reply(result.get("last_response")), "intent": result.get("intent", "fallback"), "intent_source": result.get("intent_source", "fallback"), "intent_confidence": result.get("intent_confidence", 0.0), "cart": result.get("cart", []), "address": result.get("address"), "order_number": result.get("order_number"), "order_status": result.get("order_status"), "messages": result.get("messages", []), "retrieved_context": result.get("retrieved_context", "")}
+
+
 
 
 

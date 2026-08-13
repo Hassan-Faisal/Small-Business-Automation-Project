@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     WHATSAPP_API_VERSION: str = "v21.0"
     META_TEST_RECIPIENT_PHONE: str = ""
     META_APP_SECRET: str = ""
+    META_APP_ID: str = ""
+    META_EMBEDDED_SIGNUP_CONFIG_ID: str = ""
     META_SIGNATURE_VERIFICATION_ENABLED: bool = True
     META_WABA_ID: str = ""
     META_WEBHOOK_PUBLIC_URL: str = ""

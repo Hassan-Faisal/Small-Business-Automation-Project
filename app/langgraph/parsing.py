@@ -124,6 +124,9 @@ def extract_discovery_query(text: str) -> str:
 
 
 def is_discovery_request(text: str) -> bool:
+    normalized = normalize_text(text)
+    if "cart" in normalized or "subscription" in normalized or "plan" in normalized:
+        return False
     """Identify catalog discovery without deciding whether a product matches."""
     normalized = normalize_text(text)
     constraints = extract_search_constraints(normalized)
@@ -215,6 +218,8 @@ def infer_intent(text: str) -> str:
         return "clear_cart"
     if contains_any(normalized, {"remove", "delete", "take out"}) or (re.search(r"\btake\b.*\bout\b", normalized) is not None):
         return "remove_item"
+    if contains_any(normalized, {"today's menu", "today menu", "show today's menu", "what is available today", "what can i order today", "available today", "share menu", "menu please", "aaj menu mein kya hai", "aaj menu mai kia hai", "aaj khanay mein kya hai", "aaj kya khana hai", "aaj ka menu", "what is in menu"}):
+        return "today_menu"
     if is_discovery_request(normalized):
         return "search_menu"
     if contains_any(normalized, {"add", "i want", "want to order", "get me", "give me", "can i get", "i need", "i'll have"}) and not contains_any(normalized, {"cancel", "confirm", "subscription", "plan"}):
@@ -225,10 +230,12 @@ def infer_intent(text: str) -> str:
         return "view_cart"
     if contains_any(normalized, {"clear cart", "clear my cart", "empty cart", "empty my cart", "delete my cart", "cart clear", "cart khali"}):
         return "clear_cart"
-    if contains_any(normalized, {"today's menu", "today menu", "show today's menu", "what is available today", "what can i order today", "available today", "share menu", "menu please", "aaj menu mai kia hai", "aaj ka menu", "what is in menu"}):
+    if contains_any(normalized, {"today's menu", "today menu", "show today's menu", "what is available today", "what can i order today", "available today", "share menu", "menu please", "aaj menu mein kya hai", "aaj menu mai kia hai", "aaj khanay mein kya hai", "aaj kya khana hai", "aaj ka menu", "what is in menu"}):
         return "today_menu"
     if contains_any(normalized, {"weekly menu", "show weekly menu", "this week's meals", "weekly plan", "what is available this week", "show me the menu", "is haftay ka menu"}):
         return "weekly_menu"
+    if contains_any(normalized, {"today's menu", "today menu", "show today's menu", "what is available today", "what can i order today", "available today", "share menu", "menu please", "aaj menu mein kya hai", "aaj menu mai kia hai", "aaj khanay mein kya hai", "aaj kya khana hai", "aaj ka menu", "what is in menu"}):
+        return "today_menu"
     if is_discovery_request(normalized):
         return "search_menu"
     if extract_quantity(normalized) is not None and contains_any(normalized, {"only", "actually", "just", "meant", "instead", "asked for"}):
@@ -237,7 +244,7 @@ def infer_intent(text: str) -> str:
         return "change_quantity"
     if contains_any(normalized, {"make that", "change quantity", "increase", "decrease", "reduce", "add one more", "same one again"}):
         return "change_quantity"
-    if contains_any(normalized, {"add", "order", "i want", "need", "get me", "send me", "chahiye", "cart mein add", "order kar do"}) and not contains_any(normalized, {"cancel", "confirm", "subscription", "plan"}):
+    if contains_any(normalized, {"add", "order", "i want", "need", "get me", "send me", "chahiye", "cart mein add", "order kar do", "sath kar do", "saath kar do"}) and not contains_any(normalized, {"cancel", "confirm", "subscription", "plan"}):
         return "add_item"
     if extract_day(text) is not None and _phrase_in_text(normalized, "menu"):
         return "today_menu"
@@ -271,6 +278,10 @@ def infer_intent(text: str) -> str:
     if contains_any(normalized, {"add", "order", "i want", "need", "get me", "send me", "add item number", "cart mai add kro", "order krna hai", "order karna hai", "chahiye"}):
         return "add_item"
     return "fallback"
+
+
+
+
 
 
 

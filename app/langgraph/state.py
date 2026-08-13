@@ -66,6 +66,8 @@ class ConversationState(TypedDict, total=False):
     classified_day: str | None
     classified_order_number: str | None
     classified_address: str | None
+    classified_include_terms: list[str]
+    classified_exclude_terms: list[str]
     intent_source: str
     intent_confidence: float
     clarification_response: str | None
@@ -73,3 +75,4 @@ class ConversationState(TypedDict, total=False):
     cart_view_mode: str | None
     pending_action: str | None
     selected_menu_option: dict[str, object] | None
+
