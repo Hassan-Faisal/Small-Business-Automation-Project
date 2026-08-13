@@ -79,17 +79,21 @@ def configure_logging(level: int = logging.INFO) -> None:
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
 
-    for handler in list(root_logger.handlers):
-        root_logger.removeHandler(handler)
-
-    handler = logging.StreamHandler()
-    handler.setFormatter(StructuredFormatter())
-    root_logger.addHandler(handler)
+    # Preserve handlers installed by hosting environments and test runners.
+    # Removing the root handlers here can detach pytest's caplog handler when
+    # application logging is configured after pytest starts capturing logs.
+    if not any(getattr(handler, "_tiffin_structured", False) for handler in root_logger.handlers):
+        handler = logging.StreamHandler()
+        handler.setFormatter(StructuredFormatter())
+        setattr(handler, "_tiffin_structured", True)
+        root_logger.addHandler(handler)
 
     _CONFIGURED = True
 
-
-
 def setup_logger(name: str) -> logging.Logger:
     configure_logging()
-    return logging.getLogger(name)
+    logger = logging.getLogger(name)
+    # Ensure structured application events reach root and pytest/host handlers.
+    logger.setLevel(logging.NOTSET)
+    logger.propagate = True
+    return logger

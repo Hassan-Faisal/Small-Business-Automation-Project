@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import os
 
 from fastapi import FastAPI
 
@@ -31,6 +32,22 @@ async def lifespan(app: FastAPI):
     logger.info(
         "application_startup_begin",
         extra={"event": "application_startup_begin"},
+    )
+    git_sha = (
+        os.getenv("RAILWAY_GIT_COMMIT_SHA")
+        or os.getenv("GIT_SHA")
+        or os.getenv("COMMIT_SHA")
+        or "unknown"
+    )
+    logger.info(
+        "application_runtime_identity",
+        extra={
+            "event": "application_runtime_identity",
+            "app_version": settings.APP_VERSION,
+            "git_sha": git_sha,
+            "openai_model": settings.OPENAI_MODEL,
+            "openai_api_key_configured": bool(settings.OPENAI_API_KEY.strip()),
+        },
     )
 
     logger.info(

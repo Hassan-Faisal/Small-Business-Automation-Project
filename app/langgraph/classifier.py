@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import Any, Literal
@@ -113,32 +114,51 @@ Bounded context:
 {payload}
 """
 
-    async def classify(self, context: SemanticContext | str) -> IntentClassification | None:
+    async def classify(self, context: SemanticContext | str, *, message_id: str | None = None) -> IntentClassification | None:
         semantic_context = context if isinstance(context, SemanticContext) else SemanticContext(message=context)
         if not normalize_text(semantic_context.message):
             return None
 
         started = time.perf_counter()
+        # Some integrations can globally disable already-created loggers via
+        # logging configuration. Semantic diagnostics must remain observable.
+        logger.disabled = False
+        context_counts = {
+            "recent_turn_count": len(semantic_context.recent_turns),
+            "cart_item_count": len(semantic_context.cart_items),
+            "pending_option_count": len(semantic_context.pending_options),
+            "catalog_item_count": len(semantic_context.catalog_items),
+            "active_order_present": bool(semantic_context.active_order),
+        }
+        logger.info("classifier_started", extra={"event": "classifier_started", "message_id": message_id or "unknown", "model": settings.OPENAI_MODEL, **context_counts})
         logger.info("classifier_invocation_begin", extra={"event": "classifier_invocation_begin"})
         try:
             if not settings.OPENAI_API_KEY.strip() and isinstance(self.llm, OpenAIService):
-                logger.warning("classifier_invocation_failed", extra={"event": "classifier_invocation_failed", "reason": "configuration_missing", "exception_type": "ConfigurationError", "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
+                logger.warning("classifier_failed", extra={"event": "classifier_failed", "message_id": message_id or "unknown", "category": "configuration", "exception_type": "ConfigurationError", "safe_exception_summary": "OPENAI_API_KEY is not configured", "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
                 return None
             raw = await self.llm.generate_response(self.build_prompt(semantic_context))
             if not raw.strip():
-                logger.warning("classifier_invocation_failed", extra={"event": "classifier_invocation_failed", "reason": "empty_model_response", "exception_type": None, "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
+                logger.warning("classifier_failed", extra={"event": "classifier_failed", "message_id": message_id or "unknown", "category": "empty_response", "exception_type": "EmptyResponse", "safe_exception_summary": "model returned an empty response", "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
                 return None
             result = IntentClassification.model_validate(json.loads(raw))
             if result.intent == "weekday_menu":
                 result = result.model_copy(update={"intent": "today_menu"})
             if result.intent == "policy_question":
                 result = result.model_copy(update={"intent": "faq"})
-            logger.info("classifier_invocation_success", extra={"event": "classifier_invocation_success", "intent": result.intent, "confidence": result.confidence, "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
+            logger.info("classifier_completed", extra={"event": "classifier_completed", "message_id": message_id or "unknown", "intent": result.intent, "item_name": result.item_name or "", "referenced_item": result.referenced_item or "", "quantity": result.quantity if result.quantity is not None else "", "operation": result.operation or "", "confidence": result.confidence, "needs_clarification": result.needs_clarification, "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
             return result
         except json.JSONDecodeError:
-            logger.warning("classifier_invocation_failed", extra={"event": "classifier_invocation_failed", "reason": "malformed_json", "exception_type": "JSONDecodeError", "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
+            logger.warning("classifier_failed", extra={"event": "classifier_failed", "message_id": message_id or "unknown", "category": "malformed_json", "exception_type": "JSONDecodeError", "safe_exception_summary": "model response was not valid JSON", "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
         except ValidationError:
-            logger.warning("classifier_invocation_failed", extra={"event": "classifier_invocation_failed", "reason": "schema_validation_failed", "exception_type": "ValidationError", "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
+            logger.warning("classifier_failed", extra={"event": "classifier_failed", "message_id": message_id or "unknown", "category": "validation", "exception_type": "ValidationError", "safe_exception_summary": "structured response failed schema validation", "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
         except Exception as exc:
-            logger.warning("classifier_invocation_failed", extra={"event": "classifier_invocation_failed", "reason": "model_error", "exception_type": type(exc).__name__, "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
+            exception_type = type(exc).__name__
+            lowered_type = exception_type.lower()
+            category = "timeout" if isinstance(exc, (TimeoutError, asyncio.TimeoutError)) or "timeout" in lowered_type else "api" if any(token in lowered_type for token in ("api", "openai", "http", "connection", "rate", "authentication")) else "unexpected"
+            summary = str(exc)
+            configured_key = settings.OPENAI_API_KEY.strip()
+            if configured_key:
+                summary = summary.replace(configured_key, "[redacted]")
+            summary = " ".join(summary.split())[:200] or "no exception detail"
+            logger.warning("classifier_failed", extra={"event": "classifier_failed", "message_id": message_id or "unknown", "category": category, "exception_type": exception_type, "safe_exception_summary": summary, "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
         return None

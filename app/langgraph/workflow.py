@@ -270,6 +270,7 @@ class OrderConversationWorkflow:
         memory_state = self._load_context(str(state.get("conversation_id", "default")))
         message = str(state.get("last_user_message", ""))
         deterministic_intent = infer_intent(message)
+        logger.info("semantic_route_started", extra={"event": "semantic_route_started", "message_id": state.get("message_id") or "unknown", "conversation_id": state.get("conversation_id") or "unknown", "deterministic_intent": deterministic_intent})
         intent = deterministic_intent
         semantic_intents = {"add_item", "remove_item", "change_quantity", "search_menu", "clear_cart"}
         if deterministic_intent in semantic_intents:
@@ -338,10 +339,14 @@ class OrderConversationWorkflow:
             started = time.perf_counter()
             classification = None
             semantic_context = self._semantic_context(message, memory_state)
+            logger.info("semantic_context_built", extra={"event": "semantic_context_built", "message_id": state.get("message_id") or "unknown", "recent_turn_count": len(semantic_context.recent_turns), "cart_item_count": len(semantic_context.cart_items), "pending_option_count": len(semantic_context.pending_options), "catalog_item_count": len(semantic_context.catalog_items), "active_order_present": bool(semantic_context.active_order)})
             try:
-                classification = await self.classifier.classify(semantic_context)
+                classification = await self.classifier.classify(semantic_context, message_id=str(state.get("message_id") or "") or None)
             except (TypeError, AttributeError):
-                classification = await self.classifier.classify(message)
+                try:
+                    classification = await self.classifier.classify(semantic_context)
+                except (TypeError, AttributeError):
+                    classification = await self.classifier.classify(message)
             if classification is not None and classification.confidence >= self.classifier.confidence_threshold:
                 intent_source = "llm_fallback"
                 intent_confidence = classification.confidence
@@ -402,6 +407,8 @@ class OrderConversationWorkflow:
         state["intent_confidence"] = intent_confidence
         logger.info("intent_classified", extra={"event": "intent_classified", "intent_source": intent_source, "predicted_intent": intent if intent in CANONICAL_INTENTS else "fallback", "confidence": intent_confidence, "clarification_required": intent == "fallback"})
         state["intent"] = intent if intent in CANONICAL_INTENTS else "fallback"
+        workflow_node = {"today_menu": "menu", "weekly_menu": "menu", "breakfast_menu": "menu", "lunch_menu": "menu", "dinner_menu": "menu", "subscription_plans": "subscription", "create_subscription": "subscription", "subscription_status": "subscription", "pause_subscription": "subscription", "resume_subscription": "subscription", "cancel_subscription": "subscription", "skip_meal": "subscription", "bulk_order": "subscription", "delivery_area": "rag", "delivery_timing": "rag", "faq": "rag", "payment_methods": "payment_methods"}.get(state["intent"], state["intent"])
+        logger.info("workflow_node_selected", extra={"event": "workflow_node_selected", "message_id": state.get("message_id") or "unknown", "intent": state["intent"], "node": workflow_node})
         return state
 
     def _greeting(self, state: ConversationState) -> ConversationState:
@@ -455,12 +462,31 @@ class OrderConversationWorkflow:
         pending_option: dict[str, Any] | None = None,
         item_name: str | None = None,
         candidates: list[Product] | None = None,
+        *,
+        message_id: str | None = None,
+        query_source: str | None = None,
     ) -> list[Product]:
         if pending_option and pending_option.get("name"):
             query = str(pending_option["name"])
         else:
             query = item_name or message
-        return self.product_service.resolve_available_products(query, candidates=candidates)
+        matches = self.product_service.resolve_available_products(query, candidates=candidates)
+        source = query_source or ("item_name" if item_name else "raw_message")
+        query_preview = "[redacted]" if source == "raw_message" else " ".join(query.split())[:120]
+        selected = matches[0] if len(matches) == 1 else None
+        logger.info(
+            "product_resolution",
+            extra={
+                "event": "product_resolution",
+                "message_id": message_id or "unknown",
+                "query_source": source,
+                "query_preview": query_preview,
+                "candidate_count": len(matches),
+                "selected_product_id": getattr(selected, "id", "") if selected else "",
+                "selected_product_name": getattr(selected, "name", "") if selected else "",
+            },
+        )
+        return matches
 
     @staticmethod
     def _merge_search_constraints(
@@ -504,7 +530,15 @@ class OrderConversationWorkflow:
         cart = list(memory_state.get("cart", []))
         pending_option = state.get("pending_menu_option") if isinstance(state.get("pending_menu_option"), dict) else None
         pending_clarification = state.get("pending_clarification") if isinstance(state.get("pending_clarification"), dict) else None
-        matches = self._resolve_products(str(state.get("last_user_message", "")), pending_option, (state.get("classified_item_name") or state.get("classified_referenced_item")))
+        classified_item_name = state.get("classified_item_name")
+        classified_referenced_item = state.get("classified_referenced_item")
+        matches = self._resolve_products(
+            str(state.get("last_user_message", "")),
+            pending_option,
+            classified_item_name or classified_referenced_item,
+            message_id=str(state.get("message_id") or "") or None,
+            query_source="item_name" if classified_item_name else "referenced_item" if classified_referenced_item else "raw_message",
+        )
         if not matches:
             discovery_query, constraints, discovered = self._discover_meal_offerings(
                 str(state.get("last_user_message", "")),
@@ -1140,6 +1174,9 @@ class OrderConversationWorkflow:
         if message_id and not self.memory.has_processed_message(conversation_id, message_id):
             self.memory.mark_processed_message(conversation_id, message_id)
         return {"response": self._reply(result.get("last_response")), "intent": result.get("intent", "fallback"), "intent_source": result.get("intent_source", "fallback"), "intent_confidence": result.get("intent_confidence", 0.0), "cart": result.get("cart", []), "address": result.get("address"), "order_number": result.get("order_number"), "order_status": result.get("order_status"), "messages": result.get("messages", []), "retrieved_context": result.get("retrieved_context", "")}
+
+
+
 
 
 
