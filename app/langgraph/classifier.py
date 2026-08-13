@@ -22,15 +22,29 @@ ClassifierIntent = Literal[
     "skip_meal", "bulk_order", "policy_question", "faq", "delivery_area",
     "delivery_timing", "payment_methods", "human_handoff", "unknown",
 ]
-
-
 CartOperation = Literal["add", "set", "increment", "decrement", "remove"]
+
+
+class SemanticContext(BaseModel):
+    """Bounded, non-authoritative context supplied to semantic interpretation."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    message: str = Field(max_length=1000)
+    recent_turns: list[dict[str, str]] = Field(default_factory=list, max_length=8)
+    cart_items: list[dict[str, object]] = Field(default_factory=list, max_length=20)
+    pending_clarification: dict[str, object] | None = None
+    pending_options: list[dict[str, object]] = Field(default_factory=list, max_length=20)
+    catalog_items: list[dict[str, object]] = Field(default_factory=list, max_length=50)
+    active_order: dict[str, object] = Field(default_factory=dict)
+
 
 class IntentClassification(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     intent: ClassifierIntent
     item_name: str | None = Field(default=None, max_length=120)
+    referenced_item: str | None = Field(default=None, max_length=120)
     query: str | None = Field(default=None, max_length=120)
     meal_type: str | None = Field(default=None, max_length=20)
     quantity: int | None = Field(default=None, ge=1, le=50)
@@ -40,6 +54,7 @@ class IntentClassification(BaseModel):
     address: str | None = Field(default=None, max_length=500)
     confidence: float = Field(ge=0.0, le=1.0)
     multiple_intents: bool = False
+    needs_clarification: bool = False
     include_terms: list[str] = Field(default_factory=list, max_length=20)
     exclude_terms: list[str] = Field(default_factory=list, max_length=20)
 
@@ -65,7 +80,7 @@ class IntentClassification(BaseModel):
 
 
 class StructuredIntentClassifier:
-    """Constrained language understanding used only after deterministic routing."""
+    """Structured semantic interpretation with bounded conversational context."""
 
     confidence_threshold = 0.78
 
@@ -73,156 +88,57 @@ class StructuredIntentClassifier:
         self.llm = llm or OpenAIService()
 
     @staticmethod
-    def build_prompt(message: str) -> str:
-        return f"""Classify this TiffinAI customer message into exactly one supported intent.
-Return JSON only. Do not include markdown or explanations.
+    def build_prompt(context: SemanticContext | str) -> str:
+        semantic_context = context if isinstance(context, SemanticContext) else SemanticContext(message=context)
+        payload = json.dumps(semantic_context.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":"))
+        return f"""Interpret the customer message for a food-ordering conversation. Return JSON only.
 
-Supported intents: greeting, today_menu, weekly_menu, weekday_menu, add_item,
-view_cart, search_menu, cart_total, remove_item, set_quantity, increment_quantity, decrement_quantity, change_quantity, clear_cart, confirm_order,
-provide_address, track_order, cancel_order, modify_order, subscription_plans,
-create_subscription, subscription_status, pause_subscription,
-resume_subscription, cancel_subscription, skip_meal, bulk_order,
-policy_question, delivery_area, delivery_timing, payment_methods,
-human_handoff, unknown.
+You are a semantic interpreter, not the business system. Understand flexible English and Roman Urdu wording from the current message and bounded context. Resolve references to a catalog label only when the context makes the reference unambiguous.
+
+Supported intents: greeting, today_menu, weekly_menu, weekday_menu, add_item, view_cart, search_menu, cart_total, remove_item, set_quantity, increment_quantity, decrement_quantity, change_quantity, clear_cart, confirm_order, provide_address, track_order, cancel_order, modify_order, subscription_plans, create_subscription, subscription_status, pause_subscription, resume_subscription, cancel_subscription, skip_meal, bulk_order, policy_question, faq, delivery_area, delivery_timing, payment_methods, human_handoff, unknown.
+
+Return an object with these fields:
+intent, item_name, referenced_item, query, meal_type, quantity, operation, day, order_number, address, confidence, multiple_intents, needs_clarification, include_terms, exclude_terms.
+Use null for unavailable scalar fields and [] for list fields.
 
 Rules:
-- Extract only item name, search query, quantity, meal period, day, order number, address, and reusable include/exclude search terms when present.
-- Ignore prices, database IDs, availability claims, and order status claims.
-- Use multiple_intents=true only when the customer genuinely requests more than one separate action.
-- Use unknown and low confidence when the message is genuinely unclear.
-- Never decide prices, totals, availability, ownership, or cancellation eligibility.
+- For food actions, item_name must contain the customer's requested food entity, normalized to the closest catalog label only when supported by catalog context. It is not a final database identity.
+- Use referenced_item for contextual references when useful; do not invent a product.
+- Interpret quantity changes and removals as operations, not as permission to calculate totals.
+- Set needs_clarification=true when context is missing or more than one candidate can satisfy the reference.
+- Never decide price, total, availability, authorization, order status, cancellation eligibility, or final database identity.
+- A product is valid only after deterministic database/catalog resolution by the application.
 
-Intent rules:
-- Use add_item when the customer expresses an intention to order, get, take, buy, add, or have a food item.
-- Broad purchase discovery, such as wanting something from a food category, is still add_item: preserve the purchase action while using the category to find candidate meals.
-- For add_item:
-  - put the food name in item_name.
-  - extract quantity when stated.
-  - set operation="add".
-  - query should normally be null.
-- Use search_menu only when the customer is asking for information about a food item, such as whether it exists, is available, what it costs, or asking to find/search for it.
-- For discovery constraints, put terms after "with" in include_terms and terms after "without", "no", or "excluding" in exclude_terms. Do not claim a property unless catalog data establishes it.
-- For search_menu:
-  - put the food being searched for in query.
-  - do not interpret a purchase request as search_menu.
-- Words such as "order", "want", "get me", "give me", "add", "I'll have", "I need", and "can I get" normally indicate add_item when they refer to food.
-- Questions such as "how much is", "do you have", "is available", "find", and "what meals have" normally indicate search_menu.
-- A customer does not need to use the word "order" for add_item.
-- "I want 2 Chicken Karahi" is add_item, not search_menu.
-- "Order 2 Chicken Karahi" is add_item, not search_menu.
-- "Give me 2 Chicken Karahi" is add_item, not search_menu.
-- "I need Chicken Karahi" is add_item, not search_menu.
-- "How much is Chicken Karahi?" is search_menu.
-- "Is Chicken Karahi available?" is search_menu.
-- "Do you have Chicken Karahi?" is search_menu.
-
-For quantity changes:
-- distinguish operation set, increment, decrement, or remove.
-- An explicit removal quantity is decrement.
-- remove is for deleting the entire item from the cart.
-
-Examples:
-
-Customer: "Order 2 Chicken Karahi"
-Output:
-{{"intent":"add_item","item_name":"Chicken Karahi","query":null,"meal_type":null,"quantity":2,"operation":"add","day":null,"order_number":null,"address":null,"confidence":0.98,"multiple_intents":false}}
-
-Customer: "I want 2 chicken karahi please"
-Output:
-{{"intent":"add_item","item_name":"Chicken Karahi","query":null,"meal_type":null,"quantity":2,"operation":"add","day":null,"order_number":null,"address":null,"confidence":0.98,"multiple_intents":false}}
-
-Customer: "Can I get one Chicken Karahi?"
-Output:
-{{"intent":"add_item","item_name":"Chicken Karahi","query":null,"meal_type":null,"quantity":1,"operation":"add","day":null,"order_number":null,"address":null,"confidence":0.96,"multiple_intents":false}}
-
-Customer: "How much is Chicken Karahi?"
-Output:
-{{"intent":"search_menu","item_name":null,"query":"Chicken Karahi","meal_type":null,"quantity":null,"operation":null,"day":null,"order_number":null,"address":null,"confidence":0.98,"multiple_intents":false}}
-
-Customer: "Is Chicken Karahi available?"
-Output:
-{{"intent":"search_menu","item_name":null,"query":"Chicken Karahi","meal_type":null,"quantity":null,"operation":null,"day":null,"order_number":null,"address":null,"confidence":0.98,"multiple_intents":false}}
-
-Customer: "Give me 2 Chicken Karahi"
-Output:
-{{"intent":"add_item","item_name":"Chicken Karahi","query":null,"meal_type":null,"quantity":2,"operation":"add","day":null,"order_number":null,"address":null,"confidence":0.98,"multiple_intents":false}}
-
-Customer: "I need Chicken Karahi"
-Output:
-{{"intent":"add_item","item_name":"Chicken Karahi","query":null,"meal_type":null,"quantity":null,"operation":"add","day":null,"order_number":null,"address":null,"confidence":0.96,"multiple_intents":false}}
-
-Customer: "Do you have Chicken Karahi?"
-Output:
-{{"intent":"search_menu","item_name":null,"query":"Chicken Karahi","meal_type":null,"quantity":null,"operation":null,"day":null,"order_number":null,"address":null,"confidence":0.98,"multiple_intents":false}}
-JSON shape:
-{{"intent":"unknown","item_name":null,"query":null,"meal_type":null,"quantity":null,"operation":null,"day":null,"order_number":null,"address":null,"confidence":0.0,"multiple_intents":false}}
-
-Customer message: {message}
+Bounded context:
+{payload}
 """
 
-    async def classify(self, message: str) -> IntentClassification | None:
-        if not normalize_text(message):
+    async def classify(self, context: SemanticContext | str) -> IntentClassification | None:
+        semantic_context = context if isinstance(context, SemanticContext) else SemanticContext(message=context)
+        if not normalize_text(semantic_context.message):
             return None
 
         started = time.perf_counter()
-        logger.info("classifier_invocation_begin", extra={
-            "event": "classifier_invocation_begin",
-        })
+        logger.info("classifier_invocation_begin", extra={"event": "classifier_invocation_begin"})
         try:
             if not settings.OPENAI_API_KEY.strip() and isinstance(self.llm, OpenAIService):
-                logger.warning("classifier_invocation_failed", extra={
-                    "event": "classifier_invocation_failed",
-                    "reason": "configuration_missing",
-                    "exception_type": "ConfigurationError",
-                    "latency_ms": round((time.perf_counter() - started) * 1000, 2),
-                })
+                logger.warning("classifier_invocation_failed", extra={"event": "classifier_invocation_failed", "reason": "configuration_missing", "exception_type": "ConfigurationError", "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
                 return None
-
-            raw = await self.llm.generate_response(self.build_prompt(message))
+            raw = await self.llm.generate_response(self.build_prompt(semantic_context))
             if not raw.strip():
-                logger.warning("classifier_invocation_failed", extra={
-                    "event": "classifier_invocation_failed",
-                    "reason": "empty_model_response",
-                    "exception_type": None,
-                    "latency_ms": round((time.perf_counter() - started) * 1000, 2),
-                })
+                logger.warning("classifier_invocation_failed", extra={"event": "classifier_invocation_failed", "reason": "empty_model_response", "exception_type": None, "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
                 return None
-
-            parsed: Any = json.loads(raw)
-            result = IntentClassification.model_validate(parsed)
+            result = IntentClassification.model_validate(json.loads(raw))
             if result.intent == "weekday_menu":
                 result = result.model_copy(update={"intent": "today_menu"})
             if result.intent == "policy_question":
                 result = result.model_copy(update={"intent": "faq"})
-            logger.info("classifier_invocation_success", extra={
-                "event": "classifier_invocation_success",
-                "intent": result.intent,
-                "confidence": result.confidence,
-                "latency_ms": round((time.perf_counter() - started) * 1000, 2),
-            })
+            logger.info("classifier_invocation_success", extra={"event": "classifier_invocation_success", "intent": result.intent, "confidence": result.confidence, "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
             return result
         except json.JSONDecodeError:
-            logger.warning("classifier_invocation_failed", extra={
-                "event": "classifier_invocation_failed",
-                "reason": "malformed_json",
-                "exception_type": "JSONDecodeError",
-                "latency_ms": round((time.perf_counter() - started) * 1000, 2),
-            })
-            return None
+            logger.warning("classifier_invocation_failed", extra={"event": "classifier_invocation_failed", "reason": "malformed_json", "exception_type": "JSONDecodeError", "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
         except ValidationError:
-            logger.warning("classifier_invocation_failed", extra={
-                "event": "classifier_invocation_failed",
-                "reason": "schema_validation_failed",
-                "exception_type": "ValidationError",
-                "latency_ms": round((time.perf_counter() - started) * 1000, 2),
-            })
-            return None
+            logger.warning("classifier_invocation_failed", extra={"event": "classifier_invocation_failed", "reason": "schema_validation_failed", "exception_type": "ValidationError", "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
         except Exception as exc:
-            logger.warning("classifier_invocation_failed", extra={
-                "event": "classifier_invocation_failed",
-                "reason": "model_error",
-                "exception_type": type(exc).__name__,
-                "latency_ms": round((time.perf_counter() - started) * 1000, 2),
-            })
-            return None
-
+            logger.warning("classifier_invocation_failed", extra={"event": "classifier_invocation_failed", "reason": "model_error", "exception_type": type(exc).__name__, "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
+        return None

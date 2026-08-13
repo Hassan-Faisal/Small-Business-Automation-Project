@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.logging import setup_logger
 from app.langgraph.memory import ConversationMemory
-from app.langgraph.classifier import StructuredIntentClassifier
+from app.langgraph.classifier import SemanticContext, StructuredIntentClassifier
 from app.langgraph.parsing import (
     CANONICAL_INTENTS,
     extract_day,
@@ -204,12 +204,75 @@ class OrderConversationWorkflow:
                     return True
         return False
 
+    def _semantic_context(self, message: str, memory_state: dict[str, object]) -> SemanticContext:
+        raw_messages = list(memory_state.get("messages", []))
+        recent_turns: list[dict[str, str]] = []
+        for entry in raw_messages[-8:]:
+            if not isinstance(entry, dict):
+                continue
+            role = str(entry.get("role") or "")
+            content = str(entry.get("content") or "").strip()
+            if role in {"user", "assistant"} and content:
+                recent_turns.append({"role": role, "content": content[:240]})
+
+        pending_context, pending_options = self._message_options(raw_messages)
+        bounded_options = [
+            {key: value for key, value in option.items() if key in {"label", "name", "day", "meal_type"}}
+            for option in pending_options[:20]
+            if isinstance(option, dict)
+        ]
+        catalog_items: list[dict[str, object]] = []
+        seen_names: set[str] = set()
+        try:
+            products = self.product_service.list_available_products()
+        except Exception:
+            products = []
+        for product in products[:50]:
+            name = str(product.name).strip()
+            if name and name.lower() not in seen_names:
+                seen_names.add(name.lower())
+                catalog_items.append({"name": name})
+        if self.meal_service is not None and len(catalog_items) < 50:
+            try:
+                offerings = self.meal_service.list_meal_offerings(active_only=True)
+            except Exception:
+                offerings = []
+            for offering in offerings:
+                name = str(offering.name).strip()
+                if name and name.lower() not in seen_names:
+                    seen_names.add(name.lower())
+                    catalog_items.append({"name": name, "day": offering.day_of_week, "meal_type": offering.meal_type})
+                if len(catalog_items) >= 50:
+                    break
+
+        cart_items = [
+            {"name": str(item.get("name") or ""), "quantity": int(item.get("quantity") or 0)}
+            for item in list(memory_state.get("cart", []))[:20]
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        ]
+        active_order = {
+            key: memory_state.get(key)
+            for key in ("order_number", "order_status")
+            if memory_state.get(key) is not None
+        }
+        clarification = self._message_clarification(raw_messages)
+        return SemanticContext(
+            message=message[:1000],
+            recent_turns=recent_turns,
+            cart_items=cart_items,
+            pending_clarification=clarification,
+            pending_options=bounded_options,
+            catalog_items=catalog_items,
+            active_order=active_order,
+        )
+
     async def _route_intent(self, state: ConversationState) -> ConversationState:
         memory_state = self._load_context(str(state.get("conversation_id", "default")))
         message = str(state.get("last_user_message", ""))
-        intent = infer_intent(message)
-        deterministic_intent = intent
-        if intent == "search_menu":
+        deterministic_intent = infer_intent(message)
+        intent = deterministic_intent
+        semantic_intents = {"add_item", "remove_item", "change_quantity", "search_menu", "clear_cart"}
+        if deterministic_intent in semantic_intents:
             intent = "fallback"
         if self._should_defer_menu_search(intent, message):
             intent = "fallback"
@@ -225,7 +288,7 @@ class OrderConversationWorkflow:
         if pending_options and selected is None and (pending_context == "menu_search" or (pending_context == "add_item" and pending_clarification is not None)):
             normalized_message = normalize_text(message)
             is_demonstrative_reference = any(token in normalized_message.split() for token in {"that", "this", "it", "one"})
-            if extract_position_reference(message) is not None or normalized_message.isdigit() or infer_intent(message) == "fallback" or (intent == "add_item" and is_demonstrative_reference):
+            if extract_position_reference(message) is not None or normalized_message.isdigit():
                 state["pending_clarification"] = pending_clarification
                 state["displayed_options"] = pending_options
                 state["displayed_context_type"] = "add_item"
@@ -254,7 +317,7 @@ class OrderConversationWorkflow:
                 if clarification is not None:
                     state["pending_clarification"] = clarification
             elif context_type == "menu_search":
-                if intent in {"add_item", "remove_item", "change_quantity"}:
+                if deterministic_intent in {"add_item", "remove_item", "change_quantity"}:
                     state["pending_menu_option"] = selected
                     state["pending_clarification"] = {"type": "product_selection", "operation": "add", "quantity": int(state.get("classified_quantity") or 1)}
                     state["pending_action"] = "add_item"
@@ -266,14 +329,19 @@ class OrderConversationWorkflow:
             elif context_type == "menu_day":
                 intent = "today_menu"
                 state["selected_menu_day"] = str(selected.get("day") or "")
-        if intent == "fallback" and self._looks_like_address(message):
+        if intent == "fallback" and deterministic_intent in {"fallback", "provide_address"} and self._looks_like_address(message):
             has_checkout_context = bool(memory_state.get("cart")) or bool(memory_state.get("address"))
             has_subscription_context = bool(self._phone(state.get("customer_phone") or memory_state.get("customer_phone")))
             if has_checkout_context or has_subscription_context:
                 intent = "provide_address"
         if intent == "fallback" and not selection_rejected:
             started = time.perf_counter()
-            classification = await self.classifier.classify(message)
+            classification = None
+            semantic_context = self._semantic_context(message, memory_state)
+            try:
+                classification = await self.classifier.classify(semantic_context)
+            except (TypeError, AttributeError):
+                classification = await self.classifier.classify(message)
             if classification is not None and classification.confidence >= self.classifier.confidence_threshold:
                 intent_source = "llm_fallback"
                 intent_confidence = classification.confidence
@@ -294,6 +362,8 @@ class OrderConversationWorkflow:
                 elif intent == "remove_item":
                     state["cart_operation"] = classification.operation or ("decrement" if classification.quantity is not None else "remove")
                 state["classified_item_name"] = classification.item_name
+                state["classified_referenced_item"] = classification.referenced_item
+                state["needs_clarification"] = classification.needs_clarification
                 state["classified_query"] = classification.query
                 state["classified_meal_type"] = classification.meal_type
                 state["classified_quantity"] = classification.quantity
@@ -302,21 +372,31 @@ class OrderConversationWorkflow:
                 state["classified_address"] = classification.address
                 state["classified_include_terms"] = list(getattr(classification, "include_terms", []) or [])
                 state["classified_exclude_terms"] = list(getattr(classification, "exclude_terms", []) or [])
-                if classification.multiple_intents:
+                if deterministic_intent == "add_item" and intent == "search_menu":
+                    direct_matches = self._resolve_products(message)
+                    if direct_matches:
+                        intent = "add_item"
+                    elif pending_context == "menu_search":
+                        intent = "fallback"
+                        state["clarification_response"] = "Which meal would you like to add? Reply with a number or exact meal name."
+                if classification.multiple_intents or classification.needs_clarification:
                     intent = "fallback"
-                    state["clarification_response"] = "I can help with one action at a time. Would you like to see the menu, or add an item first?"
+                    state["clarification_response"] = "I need a little more detail to identify the right meal or action. Which item did you mean?" if classification.needs_clarification else "I can help with one action at a time. Would you like to see the menu, or add an item first?"
+            if classification is None and deterministic_intent == "add_item" and self._resolve_products(message):
+                intent = "add_item"
+                intent_source = "deterministic_fallback"
+                intent_confidence = 1.0
+            elif classification is None and pending_options:
+                state["displayed_options"] = pending_options
+                state["displayed_context_type"] = pending_context or "add_item"
+                state["clarification_response"] = "Please choose one of these options:\\n" + "\\n".join(f"{index}. {option.get('name') or option.get('label')}" for index, option in enumerate(pending_options, start=1))
+                selection_rejected = True
+                intent = "fallback"
             elif classification is not None:
                 logger.info("classifier_result_rejected", extra={"event": "classifier_result_rejected", "reason": "confidence_below_threshold", "intent": classification.intent, "confidence": classification.confidence, "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
-        deterministic_constraints = self._merge_search_constraints(message, state)
-        if deterministic_intent == "search_menu" and (deterministic_constraints["include_terms"] or deterministic_constraints["exclude_terms"]):
-            intent = "search_menu"
-            state["classified_query"] = state.get("classified_query") or extract_discovery_query(message)
-            intent_source = "deterministic"
-            intent_confidence = 1.0
-        if intent == "fallback" and deterministic_intent == "search_menu" and not selection_rejected:
-            intent = "search_menu"
-            state["classified_query"] = extract_discovery_query(message)
-            intent_source = "deterministic"
+        if intent == "fallback" and deterministic_intent != "fallback" and not selection_rejected and intent_source == "fallback":
+            intent = deterministic_intent
+            intent_source = "deterministic_fallback"
             intent_confidence = 1.0
         state["intent_source"] = intent_source
         state["intent_confidence"] = intent_confidence
@@ -424,7 +504,7 @@ class OrderConversationWorkflow:
         cart = list(memory_state.get("cart", []))
         pending_option = state.get("pending_menu_option") if isinstance(state.get("pending_menu_option"), dict) else None
         pending_clarification = state.get("pending_clarification") if isinstance(state.get("pending_clarification"), dict) else None
-        matches = self._resolve_products(str(state.get("last_user_message", "")), pending_option, state.get("classified_item_name"))
+        matches = self._resolve_products(str(state.get("last_user_message", "")), pending_option, (state.get("classified_item_name") or state.get("classified_referenced_item")))
         if not matches:
             discovery_query, constraints, discovered = self._discover_meal_offerings(
                 str(state.get("last_user_message", "")),
@@ -496,7 +576,7 @@ class OrderConversationWorkflow:
 
     async def _search_menu(self, state: ConversationState) -> ConversationState:
         message = str(state.get("last_user_message", ""))
-        query = str(state.get("classified_query") or state.get("classified_item_name") or extract_discovery_query(message)).strip()
+        query = str(state.get("classified_query") or state.get("classified_item_name") or state.get("classified_referenced_item") or extract_discovery_query(message)).strip()
         if query.lower() in {"item", "items", "meal", "meals", "option", "options"}:
             query = ""
         constraints = self._merge_search_constraints(message, state)
@@ -559,7 +639,7 @@ class OrderConversationWorkflow:
 
         position = extract_position_reference(message)
         target_index: int | None = position - 1 if position and 0 < position <= len(cart) else None
-        item_name = state.get("classified_item_name")
+        item_name = state.get("classified_item_name") or state.get("classified_referenced_item")
         if target_index is None:
             cart_products = [
                 product for item in cart
@@ -654,7 +734,7 @@ class OrderConversationWorkflow:
         message = normalize_text(str(state.get("last_user_message", "")))
         position = extract_position_reference(message)
         target_index: int | None = position - 1 if position and 0 < position <= len(cart) else None
-        item_name = state.get("classified_item_name")
+        item_name = state.get("classified_item_name") or state.get("classified_referenced_item")
         if target_index is None:
             cart_products = [
                 product for item in cart
@@ -673,7 +753,8 @@ class OrderConversationWorkflow:
                 )
         if target_index is None:
             generic_removal = message in {"remove", "delete", "take out", "remove item", "delete item"}
-            if len(cart) == 1 and not item_name and position is None and generic_removal:
+            semantic_removal = state.get("intent_source") == "llm_fallback" and str(state.get("cart_operation") or "remove") == "remove"
+            if len(cart) == 1 and not item_name and position is None and (generic_removal or semantic_removal):
                 target_index = 0
             else:
                 state["cart"] = cart
@@ -1059,6 +1140,19 @@ class OrderConversationWorkflow:
         if message_id and not self.memory.has_processed_message(conversation_id, message_id):
             self.memory.mark_processed_message(conversation_id, message_id)
         return {"response": self._reply(result.get("last_response")), "intent": result.get("intent", "fallback"), "intent_source": result.get("intent_source", "fallback"), "intent_confidence": result.get("intent_confidence", 0.0), "cart": result.get("cart", []), "address": result.get("address"), "order_number": result.get("order_number"), "order_status": result.get("order_status"), "messages": result.get("messages", []), "retrieved_context": result.get("retrieved_context", "")}
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
