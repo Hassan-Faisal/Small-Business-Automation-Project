@@ -136,19 +136,31 @@ Bounded context:
             if not settings.OPENAI_API_KEY.strip() and isinstance(self.llm, OpenAIService):
                 logger.warning("classifier_failed", extra={"event": "classifier_failed", "message_id": message_id or "unknown", "category": "configuration", "exception_type": "ConfigurationError", "safe_exception_summary": "OPENAI_API_KEY is not configured", "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
                 return None
-            raw = await self.llm.generate_response(self.build_prompt(semantic_context))
-            if not raw.strip():
+            prompt = self.build_prompt(semantic_context)
+            structured_generate = getattr(self.llm, "generate_structured_response", None)
+            if callable(structured_generate):
+                raw = await structured_generate(prompt, IntentClassification)
+            else:
+                # Compatibility for injected test/dummy LLMs. Production
+                # OpenAIService always takes the structured-output path above.
+                raw = await self.llm.generate_response(prompt)
+            if raw is None or (isinstance(raw, str) and not raw.strip()):
                 logger.warning("classifier_failed", extra={"event": "classifier_failed", "message_id": message_id or "unknown", "category": "empty_response", "exception_type": "EmptyResponse", "safe_exception_summary": "model returned an empty response", "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
                 return None
-            result = IntentClassification.model_validate(json.loads(raw))
+            if isinstance(raw, IntentClassification):
+                result = raw
+            elif isinstance(raw, str):
+                # Legacy injected doubles only; production responses are
+                # already parsed by OpenAI Structured Outputs.
+                result = IntentClassification.model_validate_json(raw)
+            else:
+                result = IntentClassification.model_validate(raw)
             if result.intent == "weekday_menu":
                 result = result.model_copy(update={"intent": "today_menu"})
             if result.intent == "policy_question":
                 result = result.model_copy(update={"intent": "faq"})
             logger.info("classifier_completed", extra={"event": "classifier_completed", "message_id": message_id or "unknown", "intent": result.intent, "item_name": result.item_name or "", "referenced_item": result.referenced_item or "", "quantity": result.quantity if result.quantity is not None else "", "operation": result.operation or "", "confidence": result.confidence, "needs_clarification": result.needs_clarification, "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
             return result
-        except json.JSONDecodeError:
-            logger.warning("classifier_failed", extra={"event": "classifier_failed", "message_id": message_id or "unknown", "category": "malformed_json", "exception_type": "JSONDecodeError", "safe_exception_summary": "model response was not valid JSON", "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
         except ValidationError:
             logger.warning("classifier_failed", extra={"event": "classifier_failed", "message_id": message_id or "unknown", "category": "validation", "exception_type": "ValidationError", "safe_exception_summary": "structured response failed schema validation", "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
         except Exception as exc:

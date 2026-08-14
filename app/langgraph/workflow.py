@@ -286,10 +286,10 @@ class OrderConversationWorkflow:
         pending_action = self._message_pending_action(list(memory_state.get("messages", [])))
         selection_rejected = False
         selected = self._resolve_context_option(memory_state, message)
-        if pending_options and selected is None and (pending_context == "menu_search" or (pending_context == "add_item" and pending_clarification is not None)):
-            normalized_message = normalize_text(message)
-            is_demonstrative_reference = any(token in normalized_message.split() for token in {"that", "this", "it", "one"})
-            if extract_position_reference(message) is not None or normalized_message.isdigit():
+        normalized_message = normalize_text(message)
+        is_demonstrative_reference = any(token in normalized_message.split() for token in {"that", "this", "it", "one"})
+        if pending_options and selected is None and pending_context in {"menu_search", "add_item"}:
+            if extract_position_reference(message) is not None or normalized_message.isdigit() or is_demonstrative_reference:
                 state["pending_clarification"] = pending_clarification
                 state["displayed_options"] = pending_options
                 state["displayed_context_type"] = "add_item"
@@ -377,16 +377,18 @@ class OrderConversationWorkflow:
                 state["classified_address"] = classification.address
                 state["classified_include_terms"] = list(getattr(classification, "include_terms", []) or [])
                 state["classified_exclude_terms"] = list(getattr(classification, "exclude_terms", []) or [])
-                if deterministic_intent == "add_item" and intent == "search_menu":
-                    direct_matches = self._resolve_products(message)
-                    if direct_matches:
-                        intent = "add_item"
-                    elif pending_context == "menu_search":
-                        intent = "fallback"
-                        state["clarification_response"] = "Which meal would you like to add? Reply with a number or exact meal name."
-                if classification.multiple_intents or classification.needs_clarification:
+                if deterministic_intent == "remove_item":
+                    intent = "remove_item"
+                    state["cart_operation"] = "decrement" if classification.quantity is not None else "remove"
+                elif deterministic_intent == "add_item" and intent == "search_menu":
+                    # Explicit purchase intent stays in the catalog/add flow.
+                    intent = "add_item"
+                if classification.multiple_intents:
                     intent = "fallback"
-                    state["clarification_response"] = "I need a little more detail to identify the right meal or action. Which item did you mean?" if classification.needs_clarification else "I can help with one action at a time. Would you like to see the menu, or add an item first?"
+                    state["clarification_response"] = "I can help with one action at a time. Would you like to see the menu, or add an item first?"
+                elif classification.needs_clarification and deterministic_intent not in {"add_item", "remove_item", "change_quantity"}:
+                    intent = "fallback"
+                    state["clarification_response"] = "I need a little more detail to identify the right meal or action. Which item did you mean?"
             if classification is None and deterministic_intent == "add_item" and self._resolve_products(message):
                 intent = "add_item"
                 intent_source = "deterministic_fallback"
@@ -397,7 +399,7 @@ class OrderConversationWorkflow:
                 state["clarification_response"] = "Please choose one of these options:\\n" + "\\n".join(f"{index}. {option.get('name') or option.get('label')}" for index, option in enumerate(pending_options, start=1))
                 selection_rejected = True
                 intent = "fallback"
-            elif classification is not None:
+            elif classification is not None and classification.confidence < self.classifier.confidence_threshold:
                 logger.info("classifier_result_rejected", extra={"event": "classifier_result_rejected", "reason": "confidence_below_threshold", "intent": classification.intent, "confidence": classification.confidence, "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
         if intent == "fallback" and deterministic_intent != "fallback" and not selection_rejected and intent_source == "fallback":
             intent = deterministic_intent
@@ -679,6 +681,11 @@ class OrderConversationWorkflow:
                 product for item in cart
                 if (product := self.product_service.retrieve_product_by_id(int(item.get("product_id", 0)))) is not None
             ]
+            # A classifier entity cannot disambiguate a demonstrative by
+            # itself. Trust it only when the raw message resolves uniquely
+            # against the current cart.
+            if len(cart) > 1 and any(token in message.split() for token in {"that", "this", "it", "one"}) and not self._resolve_products(message, candidates=cart_products):
+                item_name = None
             query = str(item_name) if item_name else re.sub(r"\b(?:make|set|change|quantity|to|only|actually|just|instead|asked|for|i|meant|it|that|remove|delete|take|out|from|my|mery|order|cart|mein|mai|sai|se|hata|do|kar|kr)\b|\b\d+\b", " ", message).strip()
             matches = self._resolve_products(message, item_name=query, candidates=cart_products)
             if len(matches) > 1:
@@ -774,6 +781,11 @@ class OrderConversationWorkflow:
                 product for item in cart
                 if (product := self.product_service.retrieve_product_by_id(int(item.get("product_id", 0)))) is not None
             ]
+            # A classifier entity cannot disambiguate a demonstrative by
+            # itself. Trust it only when the raw message resolves uniquely
+            # against the current cart.
+            if len(cart) > 1 and any(token in message.split() for token in {"that", "this", "it", "one"}) and not self._resolve_products(message, candidates=cart_products):
+                item_name = None
             query = str(item_name) if item_name else re.sub(r"\b(?:make|set|change|quantity|to|only|actually|just|instead|asked|for|i|meant|it|that|remove|delete|take|out|from|my|mery|order|cart|mein|mai|sai|se|hata|do|kar|kr)\b|\b\d+\b", " ", message).strip()
             matches = self._resolve_products(message, item_name=query, candidates=cart_products)
             if len(matches) > 1:
@@ -1174,32 +1186,3 @@ class OrderConversationWorkflow:
         if message_id and not self.memory.has_processed_message(conversation_id, message_id):
             self.memory.mark_processed_message(conversation_id, message_id)
         return {"response": self._reply(result.get("last_response")), "intent": result.get("intent", "fallback"), "intent_source": result.get("intent_source", "fallback"), "intent_confidence": result.get("intent_confidence", 0.0), "cart": result.get("cart", []), "address": result.get("address"), "order_number": result.get("order_number"), "order_status": result.get("order_status"), "messages": result.get("messages", []), "retrieved_context": result.get("retrieved_context", "")}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
