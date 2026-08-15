@@ -38,6 +38,7 @@ from app.main import http_exception_handler, request_validation_exception_handle
 from app.services.chat_service import ChatService
 from app.services.order_service import OrderService
 from app.services.product_service import ProductService
+from tests.openai_test_guard import OfflineClassifier, install_openai_guard, reset_guard_state
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LOCAL_TMP_ROOT = PROJECT_ROOT / ".pytest_tmp"
@@ -47,8 +48,15 @@ os.environ.setdefault("TEMP", str(LOCAL_TMP_ROOT))
 os.environ.setdefault("TMP", str(LOCAL_TMP_ROOT))
 
 
+@pytest.fixture(autouse=True)
+def reset_openai_test_guard() -> None:
+    reset_guard_state()
+
+
 def pytest_configure(config: pytest.Config) -> None:
     config.option.basetemp = str(LOCAL_TMP_ROOT / f"basetemp-{os.getpid()}")
+    if os.getenv("RUN_OPENAI_INTEGRATION_TESTS") != "1":
+        install_openai_guard()
 
 
 @pytest.fixture()
@@ -157,6 +165,7 @@ def workflow(
         order_service=order_service,
         meal_service=seeded_tiffin_catalog,
         memory=ConversationMemory(db_session),
+        classifier=OfflineClassifier(),
     )
 
 
@@ -218,6 +227,7 @@ def app(
         order_service=order_service,
         meal_service=seeded_tiffin_catalog,
         memory=ConversationMemory(db_session),
+        classifier=OfflineClassifier(),
     )
 
     def override_get_db():
