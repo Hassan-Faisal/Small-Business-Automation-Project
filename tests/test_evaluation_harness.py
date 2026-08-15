@@ -118,7 +118,9 @@ def test_live_quota_aborts_after_first_case_without_partial_result(tmp_path: Pat
         raise BenchmarkQuotaError(f"Model {model} reported insufficient_quota/no credits while processing case {case.id}.")
 
     monkeypatch.setattr(benchmark_classifier, "_classify_case", quota_case)
-    args = Namespace(model="quota-model", dataset=DEFAULT_DATASET, output_dir=tmp_path, live=True, input_price=1.0, output_price=1.0, classifier_rate=1.0, env_gate="1")
+    dataset_path = tmp_path / "semantic.json"
+    dataset_path.write_text(json.dumps({"name": "semantic", "version": "1", "description": "x", "cases": [{"id": "semantic", "message": "same as before but two", "context": {"cart": [{"name": "Chicken Biryani", "quantity": 1}]}, "expected_intent": "change_quantity"}]}), encoding="utf-8")
+    args = Namespace(model="quota-model", dataset=dataset_path, output_dir=tmp_path, live=True, input_price=1.0, output_price=1.0, classifier_rate=1.0, env_gate="1")
     with pytest.raises(BenchmarkQuotaError, match="insufficient_quota"):
         asyncio.run(run_benchmark(args))
     assert calls == 1
@@ -197,3 +199,50 @@ def test_success_and_fallback_telemetry_are_distinguished() -> None:
     assert summary["provider_calls"]["fallback_or_failed_cases"] == 1
     assert summary["token_telemetry"]["successful_without_usage"] == 0
     assert summary["tokens"]["total"] == 15
+
+
+
+def test_actual_prediction_and_timeout_are_persisted_separately() -> None:
+    case = EvaluationCase(id="actual", message="set it to two", expected_intent="change_quantity", expected_quantity=2)
+    result = IntentClassification(intent="set_quantity", referenced_item="Biryani", quantity=2, operation="set", confidence=0.8, needs_clarification=False)
+    success = score_case(case, result)
+    failed = score_case(case, None, error="APITimeoutError")
+    assert success.actual["intent"] == "set_quantity"
+    assert success.actual["quantity"] == 2
+    assert success.semantic_equivalence_applied is True
+    assert success.semantic_equivalence == "set_quantity -> change_quantity"
+    assert failed.actual is None
+    assert failed.provider_timeout is True
+    assert failed.error == "APITimeoutError"
+
+
+def test_route_probe_uses_production_shortcuts_without_case_ids() -> None:
+    from app.evaluation.routing import assess_case
+    quantity = EvaluationCase(id="q", message="acha 2 krdo", context={"cart": [{"name": "Aloo Paratha with Raita", "quantity": 1}]}, expected_intent="change_quantity")
+    semantic = EvaluationCase(id="s", message="same as before but two", context={"cart": [{"name": "Aloo Paratha with Raita", "quantity": 1}]}, expected_intent="change_quantity")
+    pending = EvaluationCase(id="p", message="the second one", context={"pending_options": ["A", "B"]}, expected_intent="add_item")
+    assert assess_case(quantity).classifier_expected_to_be_invoked is False
+    assert assess_case(quantity).deterministic_shortcut is True
+    assert assess_case(semantic).classifier_expected_to_be_invoked is True
+    assert assess_case(pending).classifier_expected_to_be_invoked is False
+
+
+def test_quality_views_have_explicit_provider_and_reachability_denominators() -> None:
+    from app.evaluation.routing import RouteAssessment
+    case = EvaluationCase(id="v", message="x", expected_intent="greeting")
+    deterministic = score_case(case, None, route=RouteAssessment("deterministic", False, False))
+    semantic = score_case(case, IntentClassification(intent="greeting", confidence=1), route=RouteAssessment("semantic_classifier", True, False), input_tokens=100, output_tokens=50, pricing=ModelPricing(1, 2))
+    summary = summarize_scores("m", [deterministic, semantic], mode="live", pricing=ModelPricing(1, 2), classifier_rate=0.4)
+    assert summary["quality_views"]["raw_all_case_classifier"]["intent"] == {"correct": 1, "total": 1, "accuracy": 1.0}
+    assert summary["quality_views"]["deterministic_bypass"] == {"correct": 1, "total": 2, "percentage": 0.5}
+    assert summary["estimated_cost_usd"]["observed_classifier_rate"] == 0.5
+    assert summary["estimated_cost_usd"]["per_1000_customer_messages_observed_rate"] == pytest.approx(0.1)
+
+
+def test_zero_quantity_shortcut_is_marked_unsafe() -> None:
+    from app.evaluation.routing import assess_case
+    case = EvaluationCase(id="zero", message="add chicken biryani 0", context={}, expected_intent="add_item")
+    route = assess_case(case)
+    assert route.deterministic_shortcut is True
+    assert route.deterministic_safe is False
+    assert route.safety_warning

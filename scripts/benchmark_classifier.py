@@ -22,6 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.evaluation.pricing import ModelPricing
 from app.evaluation.schema import EvaluationCase, EvaluationDataset, validate_dataset
+from app.evaluation.routing import assess_case
 from app.evaluation.scoring import CaseScore, score_case, summarize_scores
 from app.langgraph.classifier import IntentClassification, SemanticContext, StructuredIntentClassifier
 
@@ -116,13 +117,17 @@ async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     pricing = ModelPricing(args.input_price, args.output_price) if args.input_price is not None or args.output_price is not None else None
     scores: list[CaseScore] = []
     for case in dataset.cases:
-        outcome = await _classify_case(case, model=args.model, live=args.live)
-        if len(outcome) == 3:
-            result, latency_ms, error = outcome
-            usage = None
+        route = assess_case(case)
+        if route.classifier_expected_to_be_invoked:
+            outcome = await _classify_case(case, model=args.model, live=args.live)
+            if len(outcome) == 3:
+                result, latency_ms, error = outcome
+                usage = None
+            else:
+                result, latency_ms, error, usage = outcome
+            scores.append(score_case(case, result, route=route, latency_ms=latency_ms, input_tokens=usage.get("input_tokens") if usage else None, output_tokens=usage.get("output_tokens") if usage else None, total_tokens=usage.get("total_tokens") if usage else None, pricing=pricing, error=error))
         else:
-            result, latency_ms, error, usage = outcome
-        scores.append(score_case(case, result, latency_ms=latency_ms, input_tokens=usage.get("input_tokens") if usage else None, output_tokens=usage.get("output_tokens") if usage else None, pricing=pricing, error=error))
+            scores.append(score_case(case, None, route=route))
     summary = summarize_scores(args.model, scores, mode="live" if args.live else "offline_reference", pricing=pricing, classifier_rate=args.classifier_rate)
     summary["dataset"] = {"name": dataset.name, "version": dataset.version, "path": str(Path(args.dataset))}
     summary["timestamp_utc"] = datetime.now(timezone.utc).isoformat()
@@ -166,4 +171,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
