@@ -12,15 +12,16 @@ from app.core.llm import build_llm
 class OpenAIService:
     """Service responsible for communicating with the OpenAI model."""
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(self, model: str | None = None, *, max_retries: int = 1) -> None:
         self.model = (model or settings.OPENAI_MODEL).strip()
+        self.max_retries = max_retries
         self._llm = None
 
     def _get_llm(self):
         if not settings.OPENAI_API_KEY.strip():
             return None
         if self._llm is None:
-            self._llm = build_llm(model=self.model)
+            self._llm = build_llm(model=self.model, max_retries=self.max_retries)
         return self._llm
 
     async def generate_response(self, prompt: str) -> str:

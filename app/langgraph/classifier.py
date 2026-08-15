@@ -88,8 +88,9 @@ class StructuredIntentClassifier:
 
     confidence_threshold = 0.78
 
-    def __init__(self, llm: OpenAIService | None = None) -> None:
+    def __init__(self, llm: OpenAIService | None = None, *, raise_provider_exceptions: bool = False) -> None:
         self.llm = llm or OpenAIService(model=settings.OPENAI_CLASSIFIER_MODEL or settings.OPENAI_MODEL)
+        self.raise_provider_exceptions = raise_provider_exceptions
 
     @staticmethod
     def build_prompt(context: SemanticContext | str) -> str:
@@ -167,6 +168,8 @@ Bounded context:
         except ValidationError:
             logger.warning("classifier_failed", extra={"event": "classifier_failed", "message_id": message_id or "unknown", "category": "validation", "exception_type": "ValidationError", "safe_exception_summary": "structured response failed schema validation", "latency_ms": round((time.perf_counter() - started) * 1000, 2)})
         except Exception as exc:
+            if self.raise_provider_exceptions:
+                raise
             exception_type = type(exc).__name__
             lowered_type = exception_type.lower()
             category = "timeout" if isinstance(exc, (TimeoutError, asyncio.TimeoutError)) or "timeout" in lowered_type else "api" if any(token in lowered_type for token in ("api", "openai", "http", "connection", "rate", "authentication")) else "unexpected"

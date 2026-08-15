@@ -67,13 +67,13 @@ def install_openai_guard() -> None:
     production_classifier = classifier_module.StructuredIntentClassifier
 
     class GuardedProductionClassifier(production_classifier):  # type: ignore[misc,valid-type]
-        def __init__(self, llm: Any = None) -> None:
+        def __init__(self, llm: Any = None, **kwargs: Any) -> None:
             if llm is None:
                 raise RealOpenAIAccessError(
                     "Real StructuredIntentClassifier construction is disabled "
                     "during the standard test suite. Inject an offline classifier."
                 )
-            super().__init__(llm=llm)
+            super().__init__(llm=llm, **kwargs)
 
     classifier_module.StructuredIntentClassifier = GuardedProductionClassifier  # type: ignore[assignment]
     workflow_module.StructuredIntentClassifier = GuardedProductionClassifier  # type: ignore[assignment]

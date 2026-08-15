@@ -29,6 +29,22 @@ from app.langgraph.classifier import IntentClassification, SemanticContext, Stru
 DEFAULT_DATASET = PROJECT_ROOT / "app" / "evaluation" / "dataset.json"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "benchmark_results"
 
+class BenchmarkQuotaError(RuntimeError):
+    """Live benchmark stopped because the provider reported unavailable credits."""
+
+
+def _is_insufficient_quota_error(exc: BaseException) -> bool:
+    """Identify billing exhaustion without treating ordinary 429 rate limits as quota failures."""
+    details = [
+        str(exc),
+        getattr(exc, "code", None),
+        getattr(exc, "type", None),
+        getattr(exc, "body", None),
+        getattr(exc, "response", None),
+    ]
+    text = " ".join(str(value) for value in details if value is not None).lower()
+    return "insufficient_quota" in text or "you have no credits remaining" in text
+
 
 class OfflineReferenceLLM:
     """Deterministic gold replay used only to validate harness plumbing offline."""
@@ -75,7 +91,7 @@ async def _classify_case(case: EvaluationCase, *, model: str, live: bool) -> tup
 
         if not settings.OPENAI_API_KEY.strip():
             raise RuntimeError("Live benchmark requires OPENAI_API_KEY; no request was made.")
-        classifier = StructuredIntentClassifier(llm=OpenAIService(model=model))
+        classifier = StructuredIntentClassifier(llm=OpenAIService(model=model, max_retries=0), raise_provider_exceptions=True)
     else:
         classifier = StructuredIntentClassifier(llm=OfflineReferenceLLM(case))
     started = time.perf_counter()
@@ -83,6 +99,8 @@ async def _classify_case(case: EvaluationCase, *, model: str, live: bool) -> tup
         result = await classifier.classify(context, message_id=f"benchmark-{case.id}")
         return result, (time.perf_counter() - started) * 1000, None
     except Exception as exc:
+        if live and _is_insufficient_quota_error(exc):
+            raise BenchmarkQuotaError(f"Model {model} reported insufficient_quota/no credits while processing case {case.id}.") from exc
         return None, (time.perf_counter() - started) * 1000, type(exc).__name__
 
 
@@ -130,6 +148,10 @@ def main() -> None:
     args.env_gate = os.getenv("RUN_OPENAI_BENCHMARK")
     try:
         summary = asyncio.run(run_benchmark(args))
+    except BenchmarkQuotaError as exc:
+        print("BENCHMARK STOPPED: API credits are unavailable; no partial model-quality result was saved.", file=sys.stderr)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2)
     except RuntimeError as exc:
         parser.error(str(exc))
     print(json.dumps({"model": summary["model"], "mode": summary["mode"], "case_count": summary["case_count"], "metrics": summary["metrics"]}, indent=2))

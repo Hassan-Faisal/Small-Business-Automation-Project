@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import json
@@ -11,7 +11,8 @@ from app.evaluation.pricing import ModelPricing, customer_message_cost
 from app.evaluation.schema import EvaluationCase, validate_dataset
 from app.evaluation.scoring import score_case, summarize_scores
 from app.langgraph.classifier import IntentClassification
-from scripts.benchmark_classifier import DEFAULT_DATASET, run_benchmark
+from scripts import benchmark_classifier
+from scripts.benchmark_classifier import DEFAULT_DATASET, BenchmarkQuotaError, _is_insufficient_quota_error, run_benchmark
 from scripts.compare_benchmarks import eligible_models, format_comparison
 
 
@@ -77,3 +78,58 @@ def test_comparison_never_selects_unpriced_model() -> None:
 def test_pricing_rejects_negative_values() -> None:
     with pytest.raises(ValueError):
         ModelPricing(-1, 1)
+
+def test_quota_detection_distinguishes_billing_from_rate_limit() -> None:
+    class QuotaError(Exception):
+        code = "insufficient_quota"
+
+    assert _is_insufficient_quota_error(QuotaError("429")) is True
+    assert _is_insufficient_quota_error(RuntimeError("You have no credits remaining")) is True
+    assert _is_insufficient_quota_error(RuntimeError("429 rate limit; try again later")) is False
+
+
+def test_production_retry_default_is_preserved() -> None:
+    from app.services.openai_service import OpenAIService
+
+    assert OpenAIService(model="production").max_retries == 1
+    assert OpenAIService(model="benchmark", max_retries=0).max_retries == 0
+
+
+def test_classifier_provider_exception_propagation_is_opt_in() -> None:
+    class FailingLLM:
+        async def generate_structured_response(self, prompt, schema):
+            raise RuntimeError("You have no credits remaining")
+
+    StructuredIntentClassifier = benchmark_classifier.StructuredIntentClassifier
+
+    assert asyncio.run(StructuredIntentClassifier(FailingLLM()).classify("hello")) is None
+    with pytest.raises(RuntimeError, match="no credits"):
+        asyncio.run(StructuredIntentClassifier(FailingLLM(), raise_provider_exceptions=True).classify("hello"))
+
+
+def test_live_quota_aborts_after_first_case_without_partial_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    async def quota_case(case, *, model, live):
+        nonlocal calls
+        calls += 1
+        raise BenchmarkQuotaError(f"Model {model} reported insufficient_quota/no credits while processing case {case.id}.")
+
+    monkeypatch.setattr(benchmark_classifier, "_classify_case", quota_case)
+    args = Namespace(model="quota-model", dataset=DEFAULT_DATASET, output_dir=tmp_path, live=True, input_price=1.0, output_price=1.0, classifier_rate=1.0, env_gate="1")
+    with pytest.raises(BenchmarkQuotaError, match="insufficient_quota"):
+        asyncio.run(run_benchmark(args))
+    assert calls == 1
+    assert not (tmp_path / "quota-model.json").exists()
+
+
+def test_live_rate_limit_is_recorded_as_failure_instead_of_billing_abort(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def rate_limited_case(case, *, model, live):
+        return None, 2.0, "RateLimitError"
+
+    monkeypatch.setattr(benchmark_classifier, "_classify_case", rate_limited_case)
+    args = Namespace(model="rate-limit-model", dataset=DEFAULT_DATASET, output_dir=tmp_path, live=True, input_price=1.0, output_price=1.0, classifier_rate=1.0, env_gate="1")
+    summary = asyncio.run(run_benchmark(args))
+    assert summary["case_count"] == 100
+    assert summary["failed_cases"] == 100
+    assert (tmp_path / "rate-limit-model.json").exists()
