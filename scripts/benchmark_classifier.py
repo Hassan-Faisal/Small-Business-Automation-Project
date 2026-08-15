@@ -83,7 +83,7 @@ def _context_for_classifier(case: EvaluationCase) -> SemanticContext:
     )
 
 
-async def _classify_case(case: EvaluationCase, *, model: str, live: bool) -> tuple[IntentClassification | None, float, str | None]:
+async def _classify_case(case: EvaluationCase, *, model: str, live: bool) -> tuple[IntentClassification | None, float, str | None, dict[str, int] | None]:
     context = _context_for_classifier(case)
     if live:
         from app.core.config import settings
@@ -91,17 +91,18 @@ async def _classify_case(case: EvaluationCase, *, model: str, live: bool) -> tup
 
         if not settings.OPENAI_API_KEY.strip():
             raise RuntimeError("Live benchmark requires OPENAI_API_KEY; no request was made.")
-        classifier = StructuredIntentClassifier(llm=OpenAIService(model=model, max_retries=0), raise_provider_exceptions=True)
+        classifier = StructuredIntentClassifier(llm=OpenAIService(model=model, max_retries=0, capture_usage=True), raise_provider_exceptions=True)
     else:
         classifier = StructuredIntentClassifier(llm=OfflineReferenceLLM(case))
     started = time.perf_counter()
     try:
         result = await classifier.classify(context, message_id=f"benchmark-{case.id}")
-        return result, (time.perf_counter() - started) * 1000, None
+        usage = getattr(getattr(classifier, "llm", None), "last_usage", None)
+        return result, (time.perf_counter() - started) * 1000, None, usage
     except Exception as exc:
         if live and _is_insufficient_quota_error(exc):
             raise BenchmarkQuotaError(f"Model {model} reported insufficient_quota/no credits while processing case {case.id}.") from exc
-        return None, (time.perf_counter() - started) * 1000, type(exc).__name__
+        return None, (time.perf_counter() - started) * 1000, type(exc).__name__, None
 
 
 def _safe_filename(model: str) -> str:
@@ -115,8 +116,13 @@ async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     pricing = ModelPricing(args.input_price, args.output_price) if args.input_price is not None or args.output_price is not None else None
     scores: list[CaseScore] = []
     for case in dataset.cases:
-        result, latency_ms, error = await _classify_case(case, model=args.model, live=args.live)
-        scores.append(score_case(case, result, latency_ms=latency_ms, pricing=pricing, error=error))
+        outcome = await _classify_case(case, model=args.model, live=args.live)
+        if len(outcome) == 3:
+            result, latency_ms, error = outcome
+            usage = None
+        else:
+            result, latency_ms, error, usage = outcome
+        scores.append(score_case(case, result, latency_ms=latency_ms, input_tokens=usage.get("input_tokens") if usage else None, output_tokens=usage.get("output_tokens") if usage else None, pricing=pricing, error=error))
     summary = summarize_scores(args.model, scores, mode="live" if args.live else "offline_reference", pricing=pricing, classifier_rate=args.classifier_rate)
     summary["dataset"] = {"name": dataset.name, "version": dataset.version, "path": str(Path(args.dataset))}
     summary["timestamp_utc"] = datetime.now(timezone.utc).isoformat()

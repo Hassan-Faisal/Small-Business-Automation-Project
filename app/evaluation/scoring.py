@@ -98,6 +98,11 @@ def summarize_scores(model: str, scores: list[CaseScore], *, mode: str, pricing:
     total_cost = sum(score.estimated_cost_usd or 0 for score in scores) if any(score.estimated_cost_usd is not None for score in scores) else None
     avg_latency = (sum(score.latency_ms or 0 for score in scores) / total) if total and any(score.latency_ms is not None for score in scores) else None
     per_classification = (total_cost / total) if total_cost is not None and total else None
+    successful_provider_calls = sum(score.structured_success for score in scores)
+    fallback_or_failed_cases = sum(score.fallback for score in scores)
+    token_usage_cases = sum(score.input_tokens is not None and score.output_tokens is not None and score.total_tokens is not None for score in scores)
+    successful_without_usage = sum(score.structured_success and score.input_tokens is None for score in scores)
+    usage_complete = token_usage_cases == successful_provider_calls
     return {
         "model": model,
         "mode": mode,
@@ -114,14 +119,18 @@ def summarize_scores(model: str, scores: list[CaseScore], *, mode: str, pricing:
             "fallback_rate": rate("fallback"),
         },
         "latency_ms": {"average": avg_latency},
+        "provider_calls": {"successful_structured_classifications": successful_provider_calls, "fallback_or_failed_cases": fallback_or_failed_cases},
+        "token_telemetry": {"cases_with_usage": token_usage_cases, "successful_without_usage": successful_without_usage, "complete_for_successful_calls": usage_complete},
         "tokens": {"input": input_tokens, "output": output_tokens, "total": total_tokens},
         "estimated_cost_usd": {
+            "actual_benchmark_cost": total_cost,
             "per_classification": per_classification,
             "per_100": per_classification * 100 if per_classification is not None else None,
             "per_1000_classifications": per_classification * 1000 if per_classification is not None else None,
             "per_1000_customer_messages": per_classification * 1000 * classifier_rate if per_classification is not None else None,
             "classifier_rate": classifier_rate,
             "pricing_configured": pricing is not None and pricing.input_per_million is not None and pricing.output_per_million is not None,
+            "cost_coverage_complete": usage_complete and pricing is not None,
         },
         "failures": [score.as_dict() for score in scores if not (score.intent_correct and score.structured_success)],
         "cases": [score.as_dict() for score in scores],

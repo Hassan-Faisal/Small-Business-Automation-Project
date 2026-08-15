@@ -4,6 +4,7 @@ import asyncio
 import json
 from argparse import Namespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,6 +12,7 @@ from app.evaluation.pricing import ModelPricing, customer_message_cost
 from app.evaluation.schema import EvaluationCase, validate_dataset
 from app.evaluation.scoring import score_case, summarize_scores
 from app.langgraph.classifier import IntentClassification
+from app.services.openai_service import OpenAIService, extract_token_usage
 from scripts import benchmark_classifier
 from scripts.benchmark_classifier import DEFAULT_DATASET, BenchmarkQuotaError, _is_insufficient_quota_error, run_benchmark
 from scripts.compare_benchmarks import eligible_models, format_comparison
@@ -133,3 +135,65 @@ def test_live_rate_limit_is_recorded_as_failure_instead_of_billing_abort(tmp_pat
     assert summary["case_count"] == 100
     assert summary["failed_cases"] == 100
     assert (tmp_path / "rate-limit-model.json").exists()
+def test_token_usage_extraction_supports_langchain_metadata_shapes() -> None:
+    assert extract_token_usage(SimpleNamespace(usage_metadata={"input_tokens": 120, "output_tokens": 30, "total_tokens": 150})) == {
+        "input_tokens": 120, "output_tokens": 30, "total_tokens": 150
+    }
+    assert extract_token_usage({"response_metadata": {"token_usage": {"prompt_tokens": 200, "completion_tokens": 40, "total_tokens": 240}}}) == {
+        "input_tokens": 200, "output_tokens": 40, "total_tokens": 240
+    }
+
+
+def test_structured_service_captures_raw_response_usage_without_changing_parsed_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeRunnable:
+        async def ainvoke(self, messages):
+            return {
+                "raw": SimpleNamespace(usage_metadata={"input_tokens": 111, "output_tokens": 22, "total_tokens": 133}),
+                "parsed": IntentClassification(intent="greeting", confidence=0.95),
+                "parsing_error": None,
+            }
+
+    class FakeChatModel:
+        def __init__(self):
+            self.kwargs = None
+
+        def with_structured_output(self, schema, **kwargs):
+            self.kwargs = kwargs
+            return FakeRunnable()
+
+    service = OpenAIService(model="mock", capture_usage=True)
+    service._llm = FakeChatModel()
+    monkeypatch.setattr("app.services.openai_service.settings.OPENAI_API_KEY", "test-key")
+    result = asyncio.run(service.generate_structured_response("hello", IntentClassification))
+    assert isinstance(result, IntentClassification)
+    assert service.last_usage == {"input_tokens": 111, "output_tokens": 22, "total_tokens": 133}
+    assert service._llm.kwargs["include_raw"] is True
+
+
+def test_actual_cost_and_projection_aggregate_provider_usage() -> None:
+    case = EvaluationCase(id="cost", message="hello", expected_intent="greeting")
+    result = IntentClassification(intent="greeting", confidence=0.9)
+    pricing = ModelPricing(1.0, 2.0)
+    first = score_case(case, result, input_tokens=100, output_tokens=50, pricing=pricing)
+    second = score_case(case, result, input_tokens=200, output_tokens=100, pricing=pricing)
+    summary = summarize_scores("mock", [first, second], mode="live", pricing=pricing, classifier_rate=0.4)
+    assert summary["tokens"] == {"input": 300, "output": 150, "total": 450}
+    assert summary["provider_calls"] == {"successful_structured_classifications": 2, "fallback_or_failed_cases": 0}
+    assert summary["token_telemetry"]["complete_for_successful_calls"] is True
+    assert summary["estimated_cost_usd"]["actual_benchmark_cost"] == pytest.approx(0.0006)
+    assert summary["estimated_cost_usd"]["per_classification"] == pytest.approx(0.0003)
+    assert summary["estimated_cost_usd"]["per_100"] == pytest.approx(0.03)
+    assert summary["estimated_cost_usd"]["per_1000_classifications"] == pytest.approx(0.3)
+    assert summary["estimated_cost_usd"]["per_1000_customer_messages"] == pytest.approx(0.12)
+
+
+def test_success_and_fallback_telemetry_are_distinguished() -> None:
+    case = EvaluationCase(id="telemetry", message="hello", expected_intent="greeting")
+    result = IntentClassification(intent="greeting", confidence=0.9)
+    successful = score_case(case, result, input_tokens=10, output_tokens=5, pricing=ModelPricing(1.0, 1.0))
+    fallback = score_case(case, None, error="TimeoutError")
+    summary = summarize_scores("mock", [successful, fallback], mode="live", pricing=ModelPricing(1.0, 1.0))
+    assert summary["provider_calls"]["successful_structured_classifications"] == 1
+    assert summary["provider_calls"]["fallback_or_failed_cases"] == 1
+    assert summary["token_telemetry"]["successful_without_usage"] == 0
+    assert summary["tokens"]["total"] == 15
