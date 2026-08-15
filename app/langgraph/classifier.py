@@ -83,6 +83,9 @@ class IntentClassification(BaseModel):
 class StructuredIntentClassifier:
     """Structured semantic interpretation with bounded conversational context."""
 
+    allow_deterministic_shortcuts = True
+    max_generations_per_message = 1
+
     confidence_threshold = 0.78
 
     def __init__(self, llm: OpenAIService | None = None) -> None:

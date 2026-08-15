@@ -18,6 +18,7 @@ class RAGChain:
         self.knowledge_manager = knowledge_manager
         self.retriever = None
         self.llm = llm or OpenAIService()
+        self.last_call_metadata: dict[str, int | bool] = {"rag_invoked": False, "rag_generation_count": 0, "embedding_invoked": False}
 
     def build_prompt(self, question: str, context: str) -> str:
         return f"""You are TiffinAI, a WhatsApp support assistant for a meal ordering business.
@@ -57,6 +58,7 @@ Answer:
         return self.retriever
 
     async def ask(self, question: str) -> str:
+        self.last_call_metadata = {"rag_invoked": True, "rag_generation_count": 0, "embedding_invoked": False}
         decision = decide_rag_usage(question)
         if not decision.use_rag:
             logger.info("rag_dynamic_question_blocked", extra={"event": "rag_dynamic_question_blocked", "reason": decision.reason})
@@ -78,6 +80,7 @@ Answer:
             return POLICY_UNAVAILABLE_FALLBACK
 
         documents = retriever.invoke(question)
+        self.last_call_metadata["embedding_invoked"] = True
         context = "\n\n".join(document.page_content for document in documents)
         if not context.strip():
             return POLICY_FALLBACK
@@ -85,6 +88,7 @@ Answer:
         prompt = self.build_prompt(question=question, context=context)
         try:
             response = await self.llm.generate_response(prompt)
+            self.last_call_metadata["rag_generation_count"] = 1
         except Exception:
             logger.exception("rag_llm_call_failed", extra={"event": "rag_llm_call_failed"})
             return POLICY_UNAVAILABLE_FALLBACK

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+import inspect
 import re
 import time
 from decimal import Decimal
@@ -24,6 +25,7 @@ from app.langgraph.parsing import (
     extract_position_reference,
     extract_quantity,
     infer_intent,
+    is_discovery_request,
     normalize_text,
 )
 from app.langgraph.state import ConversationState
@@ -33,7 +35,7 @@ from app.models.order import Order
 from app.models.product import Product
 from app.rag.rag_chain import RAGChain
 from app.services.order_service import OrderService
-from app.services.product_service import ProductService
+from app.services.product_service import PRODUCT_QUERY_STOP_WORDS, ProductService
 from app.services.tiffin_service import BULK_ORDER_THRESHOLD, SubscriptionService, TiffinCatalogService, TiffinPolicyService, WEEKDAYS
 
 logger = setup_logger(__name__)
@@ -204,72 +206,198 @@ class OrderConversationWorkflow:
                     return True
         return False
 
-    def _semantic_context(self, message: str, memory_state: dict[str, object]) -> SemanticContext:
+    @staticmethod
+    def _telemetry(message_id: str | None, deterministic_intent: str) -> dict[str, object]:
+        return {
+            "message_id": message_id or "unknown",
+            "deterministic_intent": deterministic_intent,
+            "classifier_invoked": False,
+            "classifier_call_count": 0,
+            "rag_invoked": False,
+            "rag_generation_count": 0,
+            "embedding_invoked": False,
+            "semantic_context_character_count": 0,
+            "estimated_input_tokens": 0,
+            "catalog_candidate_count": 0,
+            "recent_turn_count": 0,
+            "cart_item_count": 0,
+            "final_intent": "fallback",
+        }
+
+    @staticmethod
+    def _looks_like_add_request(message: str, deterministic_intent: str) -> bool:
+        normalized = normalize_text(message)
+        if deterministic_intent == "add_item":
+            return True
+        return any(marker in normalized for marker in ("kar do", "chahiye", "bhej", "dena", "add", "order")) and not any(
+            marker in normalized for marker in ("what", "which", "available", "kya", "dikhao", "batao")
+        )
+
+    @staticmethod
+    def _looks_like_quantity_change(message: str) -> bool:
+        normalized = normalize_text(message)
+        return extract_quantity(normalized) is not None and any(
+            marker in normalized for marker in ("make", "set", "change", "kar do", "only", "actually", "just")
+        )
+
+    @staticmethod
+    def _looks_like_removal(message: str) -> bool:
+        normalized = normalize_text(message)
+        return any(marker in normalized.split() for marker in ("remove", "delete", "hata", "nikal")) or "take out" in normalized
+
+    def _deterministic_shortcut(
+        self,
+        message: str,
+        deterministic_intent: str,
+        memory_state: dict[str, object],
+    ) -> tuple[str, dict[str, object]] | None:
+        if not getattr(self.classifier, "allow_deterministic_shortcuts", False):
+            return None
+        cart = [item for item in list(memory_state.get("cart", [])) if isinstance(item, dict)]
+        quantity = extract_quantity(message)
+        if len(cart) == 1 and quantity is not None and self._looks_like_quantity_change(message) and not self._looks_like_removal(message):
+            return "change_quantity", {"cart_operation": "set", "classified_quantity": quantity}
+        if len(cart) == 1 and self._looks_like_removal(message):
+            return "remove_item", {
+                "cart_operation": "decrement" if quantity is not None else "remove",
+                "classified_quantity": quantity,
+                "classified_referenced_item": str(cart[0].get("name") or ""),
+            }
+        if self._looks_like_add_request(message, deterministic_intent):
+            matches = self._resolve_products(message)
+            if len(matches) == 1:
+                return "add_item", {"classified_item_name": matches[0].name}
+        return None
+
+    def _candidate_catalog_items(self, message: str, profile: str) -> list[dict[str, object]]:
+        candidates: list[dict[str, object]] = []
+        seen: set[str] = set()
+        if profile == "add_item":
+            matches = self._resolve_products(message)
+            if not matches:
+                tokens = [token for token in normalize_text(message).split() if token not in PRODUCT_QUERY_STOP_WORDS and not token.isdigit()]
+                for token in tokens:
+                    for product in self._resolve_products(token)[:5]:
+                        if product not in matches:
+                            matches.append(product)
+            for product in matches[:5]:
+                key = str(product.name).lower()
+                if key not in seen:
+                    seen.add(key)
+                    candidates.append({"name": product.name})
+        elif profile == "search_menu" and self.meal_service is not None:
+            _, _, matches = self._discover_meal_offerings(message)
+            for offering in matches[:5]:
+                key = str(offering.name).lower()
+                if key not in seen:
+                    seen.add(key)
+                    candidates.append({"name": offering.name, "day": offering.day_of_week, "meal_type": offering.meal_type})
+        return candidates
+
+    @staticmethod
+    def _semantic_profile(message: str, deterministic_intent: str, memory_state: dict[str, object]) -> str:
+        normalized = normalize_text(message)
+        if deterministic_intent == "search_menu" or is_discovery_request(normalized):
+            return "search_menu"
+        if any(marker in normalized.split() for marker in ("remove", "delete", "hata", "nikal")) or "take out" in normalized:
+            return "remove_item"
+        if extract_quantity(message) is not None and memory_state.get("cart"):
+            return "change_quantity"
+        if deterministic_intent == "add_item" or any(marker in normalized for marker in ("add", "order", "chahiye", "kar do")):
+            return "add_item"
+        return "contextual"
+
+    async def _classify_once(
+        self,
+        semantic_context: SemanticContext,
+        message_id: str | None,
+        telemetry: dict[str, object],
+    ) -> Any:
+        max_calls = int(getattr(self.classifier, "max_generations_per_message", 1))
+        if int(telemetry["classifier_call_count"]) >= max_calls:
+            logger.error("classifier_generation_budget_exhausted", extra={"event": "classifier_generation_budget_exhausted", "message_id": message_id or "unknown", "max_generations": max_calls})
+            return None
+        telemetry["classifier_invoked"] = True
+        telemetry["classifier_call_count"] = int(telemetry["classifier_call_count"]) + 1
+        classify = self.classifier.classify
+        try:
+            parameters = inspect.signature(classify).parameters
+            positional = [parameter for parameter in parameters.values() if parameter.kind in {inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}]
+            argument = semantic_context.message if positional and positional[0].name == "message" else semantic_context
+            if "message_id" in parameters or any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
+                return await classify(argument, message_id=message_id)
+            return await classify(argument)
+        except Exception:
+            logger.exception("classifier_invocation_failed", extra={"event": "classifier_invocation_failed", "message_id": message_id or "unknown", "classifier_call_count": telemetry["classifier_call_count"]})
+            return None
+    def _semantic_context(
+        self,
+        message: str,
+        memory_state: dict[str, object],
+        *,
+        profile: str = "contextual",
+        catalog_candidates: list[dict[str, object]] | None = None,
+    ) -> SemanticContext:
         raw_messages = list(memory_state.get("messages", []))
         recent_turns: list[dict[str, str]] = []
-        for entry in raw_messages[-8:]:
-            if not isinstance(entry, dict):
-                continue
-            role = str(entry.get("role") or "")
-            content = str(entry.get("content") or "").strip()
-            if role in {"user", "assistant"} and content:
-                recent_turns.append({"role": role, "content": content[:240]})
+        history_limit = 4 if profile == "contextual" else 2 if profile in {"add_item", "remove_item", "change_quantity"} else 0
+        if history_limit:
+            for entry in reversed(raw_messages):
+                if not isinstance(entry, dict):
+                    continue
+                role = str(entry.get("role") or "")
+                if role == "user":
+                    content = str(entry.get("content") or "").strip()
+                    if content:
+                        recent_turns.append({"role": "user", "content": content[:160]})
+                elif role == "assistant" and isinstance(entry.get("options"), list):
+                    labels = [str(option.get("name") or option.get("label") or "") for option in entry["options"][:5] if isinstance(option, dict)]
+                    if labels:
+                        recent_turns.append({"role": "assistant", "content": "[displayed options: " + ", ".join(labels) + "]"})
+                if len(recent_turns) >= history_limit:
+                    break
+            recent_turns.reverse()
 
         pending_context, pending_options = self._message_options(raw_messages)
-        bounded_options = [
-            {key: value for key, value in option.items() if key in {"label", "name", "day", "meal_type"}}
-            for option in pending_options[:20]
-            if isinstance(option, dict)
-        ]
-        catalog_items: list[dict[str, object]] = []
-        seen_names: set[str] = set()
-        try:
-            products = self.product_service.list_available_products()
-        except Exception:
-            products = []
-        for product in products[:50]:
-            name = str(product.name).strip()
-            if name and name.lower() not in seen_names:
-                seen_names.add(name.lower())
-                catalog_items.append({"name": name})
-        if self.meal_service is not None and len(catalog_items) < 50:
-            try:
-                offerings = self.meal_service.list_meal_offerings(active_only=True)
-            except Exception:
-                offerings = []
-            for offering in offerings:
-                name = str(offering.name).strip()
-                if name and name.lower() not in seen_names:
-                    seen_names.add(name.lower())
-                    catalog_items.append({"name": name, "day": offering.day_of_week, "meal_type": offering.meal_type})
-                if len(catalog_items) >= 50:
-                    break
+        bounded_options = []
+        if profile in {"add_item", "contextual"}:
+            bounded_options = [
+                {key: value for key, value in option.items() if key in {"label", "name", "day", "meal_type"}}
+                for option in pending_options[:5]
+                if isinstance(option, dict)
+            ]
 
-        cart_items = [
-            {"name": str(item.get("name") or ""), "quantity": int(item.get("quantity") or 0)}
-            for item in list(memory_state.get("cart", []))[:20]
-            if isinstance(item, dict) and str(item.get("name") or "").strip()
-        ]
-        active_order = {
-            key: memory_state.get(key)
-            for key in ("order_number", "order_status")
-            if memory_state.get(key) is not None
-        }
-        clarification = self._message_clarification(raw_messages)
+        cart_items = []
+        if profile in {"change_quantity", "remove_item", "contextual"}:
+            cart_items = [
+                {"name": str(item.get("name") or ""), "quantity": int(item.get("quantity") or 0)}
+                for item in list(memory_state.get("cart", []))[:5]
+                if isinstance(item, dict) and str(item.get("name") or "").strip()
+            ]
+
+        active_order = {}
+        if profile == "contextual":
+            active_order = {
+                key: memory_state.get(key)
+                for key in ("order_number", "order_status")
+                if memory_state.get(key) is not None
+            }
+        clarification = self._message_clarification(raw_messages) if profile in {"add_item", "contextual"} else None
         return SemanticContext(
             message=message[:1000],
             recent_turns=recent_turns,
             cart_items=cart_items,
             pending_clarification=clarification,
             pending_options=bounded_options,
-            catalog_items=catalog_items,
+            catalog_items=list(catalog_candidates or [])[:5],
             active_order=active_order,
         )
-
     async def _route_intent(self, state: ConversationState) -> ConversationState:
         memory_state = self._load_context(str(state.get("conversation_id", "default")))
         message = str(state.get("last_user_message", ""))
         deterministic_intent = infer_intent(message)
+        telemetry = self._telemetry(str(state.get("message_id") or "") or None, deterministic_intent)
+        state["llm_telemetry"] = telemetry
         logger.info("semantic_route_started", extra={"event": "semantic_route_started", "message_id": state.get("message_id") or "unknown", "conversation_id": state.get("conversation_id") or "unknown", "deterministic_intent": deterministic_intent})
         intent = deterministic_intent
         semantic_intents = {"add_item", "remove_item", "change_quantity", "search_menu", "clear_cart"}
@@ -335,18 +463,36 @@ class OrderConversationWorkflow:
             has_subscription_context = bool(self._phone(state.get("customer_phone") or memory_state.get("customer_phone")))
             if has_checkout_context or has_subscription_context:
                 intent = "provide_address"
+        shortcut = None
+        if not selection_rejected and selected is None:
+            search_constraints = extract_search_constraints(message)
+            if deterministic_intent == "search_menu" and (search_constraints["include_terms"] or search_constraints["exclude_terms"]):
+                shortcut = ("search_menu", {"classified_query": extract_discovery_query(message), "classified_include_terms": search_constraints["include_terms"], "classified_exclude_terms": search_constraints["exclude_terms"]})
+            else:
+                shortcut = self._deterministic_shortcut(message, deterministic_intent, memory_state)
+        if shortcut is not None:
+            intent, shortcut_state = shortcut
+            state.update(shortcut_state)
+            intent_source = "deterministic_shortcut"
+            intent_confidence = 1.0
+            selection_rejected = True
+
         if intent == "fallback" and not selection_rejected:
             started = time.perf_counter()
             classification = None
-            semantic_context = self._semantic_context(message, memory_state)
-            logger.info("semantic_context_built", extra={"event": "semantic_context_built", "message_id": state.get("message_id") or "unknown", "recent_turn_count": len(semantic_context.recent_turns), "cart_item_count": len(semantic_context.cart_items), "pending_option_count": len(semantic_context.pending_options), "catalog_item_count": len(semantic_context.catalog_items), "active_order_present": bool(semantic_context.active_order)})
-            try:
-                classification = await self.classifier.classify(semantic_context, message_id=str(state.get("message_id") or "") or None)
-            except (TypeError, AttributeError):
-                try:
-                    classification = await self.classifier.classify(semantic_context)
-                except (TypeError, AttributeError):
-                    classification = await self.classifier.classify(message)
+            profile = self._semantic_profile(message, deterministic_intent, memory_state)
+            catalog_candidates = self._candidate_catalog_items(message, profile)
+            semantic_context = self._semantic_context(message, memory_state, profile=profile, catalog_candidates=catalog_candidates)
+            prompt = StructuredIntentClassifier.build_prompt(semantic_context)
+            telemetry.update({
+                "semantic_context_character_count": len(prompt),
+                "estimated_input_tokens": max(1, (len(prompt) + 3) // 4),
+                "catalog_candidate_count": len(semantic_context.catalog_items),
+                "recent_turn_count": len(semantic_context.recent_turns),
+                "cart_item_count": len(semantic_context.cart_items),
+            })
+            logger.info("semantic_context_built", extra={"event": "semantic_context_built", "message_id": state.get("message_id") or "unknown", "profile": profile, "recent_turn_count": len(semantic_context.recent_turns), "cart_item_count": len(semantic_context.cart_items), "pending_option_count": len(semantic_context.pending_options), "catalog_candidate_count": len(semantic_context.catalog_items), "catalog_item_count": len(semantic_context.catalog_items), "active_order_present": bool(semantic_context.active_order)})
+            classification = await self._classify_once(semantic_context, str(state.get("message_id") or "") or None, telemetry)
             if classification is not None and classification.confidence >= self.classifier.confidence_threshold:
                 intent_source = "llm_fallback"
                 intent_confidence = classification.confidence
@@ -409,6 +555,8 @@ class OrderConversationWorkflow:
         state["intent_confidence"] = intent_confidence
         logger.info("intent_classified", extra={"event": "intent_classified", "intent_source": intent_source, "predicted_intent": intent if intent in CANONICAL_INTENTS else "fallback", "confidence": intent_confidence, "clarification_required": intent == "fallback"})
         state["intent"] = intent if intent in CANONICAL_INTENTS else "fallback"
+        telemetry["final_intent"] = state["intent"]
+        logger.info("message_llm_telemetry", extra={"event": "message_llm_telemetry", **telemetry})
         workflow_node = {"today_menu": "menu", "weekly_menu": "menu", "breakfast_menu": "menu", "lunch_menu": "menu", "dinner_menu": "menu", "subscription_plans": "subscription", "create_subscription": "subscription", "subscription_status": "subscription", "pause_subscription": "subscription", "resume_subscription": "subscription", "cancel_subscription": "subscription", "skip_meal": "subscription", "bulk_order": "subscription", "delivery_area": "rag", "delivery_timing": "rag", "faq": "rag", "payment_methods": "payment_methods"}.get(state["intent"], state["intent"])
         logger.info("workflow_node_selected", extra={"event": "workflow_node_selected", "message_id": state.get("message_id") or "unknown", "intent": state["intent"], "node": workflow_node})
         return state
@@ -1117,6 +1265,13 @@ class OrderConversationWorkflow:
     async def _rag(self, state: ConversationState) -> ConversationState:
         try:
             state["last_response"] = self._reply(await self.rag_chain.ask(str(state.get("last_user_message", ""))) or POLICY_FALLBACK)
+            telemetry = state.get("llm_telemetry")
+            metadata = getattr(self.rag_chain, "last_call_metadata", None)
+            if isinstance(telemetry, dict):
+                if isinstance(metadata, dict):
+                    telemetry.update({key: metadata.get(key, value) for key, value in (("rag_invoked", True), ("rag_generation_count", 1), ("embedding_invoked", False))})
+                else:
+                    telemetry.update({"rag_invoked": True, "rag_generation_count": 1})
         except Exception:
             logger.exception("rag_query_failed", extra={"event": "rag_query_failed"})
             state["last_response"] = POLICY_FALLBACK
@@ -1185,4 +1340,4 @@ class OrderConversationWorkflow:
         result = await self.graph.ainvoke(initial_state)
         if message_id and not self.memory.has_processed_message(conversation_id, message_id):
             self.memory.mark_processed_message(conversation_id, message_id)
-        return {"response": self._reply(result.get("last_response")), "intent": result.get("intent", "fallback"), "intent_source": result.get("intent_source", "fallback"), "intent_confidence": result.get("intent_confidence", 0.0), "cart": result.get("cart", []), "address": result.get("address"), "order_number": result.get("order_number"), "order_status": result.get("order_status"), "messages": result.get("messages", []), "retrieved_context": result.get("retrieved_context", "")}
+        return {"response": self._reply(result.get("last_response")), "intent": result.get("intent", "fallback"), "intent_source": result.get("intent_source", "fallback"), "intent_confidence": result.get("intent_confidence", 0.0), "cart": result.get("cart", []), "address": result.get("address"), "order_number": result.get("order_number"), "order_status": result.get("order_status"), "messages": result.get("messages", []), "retrieved_context": result.get("retrieved_context", ""), "llm_telemetry": result.get("llm_telemetry", {})}
