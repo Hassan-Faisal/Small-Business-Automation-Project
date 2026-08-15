@@ -27,6 +27,8 @@ class EvaluationDataset(BaseModel):
     name: str
     version: str
     description: str
+    source_dataset: str | None = None
+    selection_policy: str | None = None
     cases: list[EvaluationCase] = Field(min_length=1)
 
     @classmethod
