@@ -1,0 +1,1369 @@
+﻿{
+    "name":  "tiffinai_structured_intent_generalization",
+    "version":  "1.1",
+    "description":  "Offline gold cases for evaluating semantic intent classification across English, Roman Urdu, contextual state, safe ambiguity handling, and quantity robustness.",
+    "cases":  [
+                  {
+                      "id":  "greeting-001",
+                      "message":  "hello there",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "greeting",
+                      "expected_clarification":  false,
+                      "notes":  "Natural greeting"
+                  },
+                  {
+                      "id":  "greeting-002",
+                      "message":  "assalam o alaikum",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "greeting",
+                      "expected_clarification":  false,
+                      "notes":  "Roman Urdu greeting"
+                  },
+                  {
+                      "id":  "greeting-003",
+                      "message":  "hey, hope you\u0027re well",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "greeting",
+                      "expected_clarification":  false,
+                      "notes":  "Informal English"
+                  },
+                  {
+                      "id":  "greeting-004",
+                      "message":  "salam ji",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "greeting",
+                      "expected_clarification":  false,
+                      "notes":  "Short greeting"
+                  },
+                  {
+                      "id":  "menu-001",
+                      "message":  "what can I eat today?",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "today_menu",
+                      "expected_clarification":  false,
+                      "notes":  "Menu discovery"
+                  },
+                  {
+                      "id":  "menu-002",
+                      "message":  "aaj ka menu dikha dein",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "today_menu",
+                      "expected_clarification":  false,
+                      "notes":  "Roman Urdu menu request"
+                  },
+                  {
+                      "id":  "menu-003",
+                      "message":  "show me dinner options",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "dinner_menu",
+                      "expected_clarification":  false,
+                      "notes":  "Meal-specific menu"
+                  },
+                  {
+                      "id":  "menu-004",
+                      "message":  "kal lunch mein kya hai?",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "lunch_menu",
+                      "expected_clarification":  false,
+                      "notes":  "Relative day and meal"
+                  },
+                  {
+                      "id":  "menu-005",
+                      "message":  "can I see the weekly choices",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "weekly_menu",
+                      "expected_clarification":  false,
+                      "notes":  "Weekly discovery"
+                  },
+                  {
+                      "id":  "menu-006",
+                      "message":  "nashtay mein kia milay ga",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "breakfast_menu",
+                      "expected_clarification":  false,
+                      "notes":  "Informal Roman Urdu"
+                  },
+                  {
+                      "id":  "add-001",
+                      "message":  "Please put a chicken biryani in my order",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_item_name":  "Chicken Biryani",
+                      "expected_quantity":  1,
+                      "expected_operation":  "add",
+                      "expected_clarification":  false,
+                      "notes":  "Natural purchase language"
+                  },
+                  {
+                      "id":  "add-002",
+                      "message":  "beef kofta kar do",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_item_name":  "Beef Kofta",
+                      "expected_quantity":  1,
+                      "expected_operation":  "add",
+                      "expected_clarification":  false,
+                      "notes":  "Roman Urdu purchase"
+                  },
+                  {
+                      "id":  "add-003",
+                      "message":  "yar aloo paratha raita k sath krdo",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_item_name":  "Aloo Paratha with Raita",
+                      "expected_quantity":  1,
+                      "expected_operation":  "add",
+                      "expected_clarification":  false,
+                      "notes":  "Mixed informal language"
+                  },
+                  {
+                      "id":  "add-004",
+                      "message":  "mujhe daal chawal bhej dein",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_item_name":  "Daal Chawal",
+                      "expected_quantity":  1,
+                      "expected_operation":  "add",
+                      "expected_clarification":  false,
+                      "notes":  "Polite Roman Urdu"
+                  },
+                  {
+                      "id":  "add-005",
+                      "message":  "I would like the rice dish with a spicy curry",
+                      "context":  {
+                                      "catalog_candidates":  [
+                                                                 "Chicken Biryani",
+                                                                 "Beef Kofta"
+                                                             ]
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_clarification":  true,
+                      "notes":  "Entity intentionally ambiguous"
+                  },
+                  {
+                      "id":  "add-006",
+                      "message":  "order me two portions of the kofta",
+                      "context":  {
+                                      "catalog_candidates":  [
+                                                                 "Beef Kofta",
+                                                                 "Chicken Kofta"
+                                                             ]
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_quantity":  2,
+                      "expected_operation":  "add",
+                      "expected_clarification":  true,
+                      "notes":  "Quantity clear, entity ambiguous"
+                  },
+                  {
+                      "id":  "add-007",
+                      "message":  "ek chicken pulao add karna hai",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_item_name":  "Chicken Pulao",
+                      "expected_quantity":  1,
+                      "expected_operation":  "add",
+                      "expected_clarification":  false,
+                      "notes":  "Spelling and grammar variation"
+                  },
+                  {
+                      "id":  "add-008",
+                      "message":  "2 plates aloo parathay chahiye",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_item_name":  "Aloo Paratha",
+                      "expected_quantity":  2,
+                      "expected_operation":  "add",
+                      "expected_clarification":  false,
+                      "notes":  "Plural spelling variation"
+                  },
+                  {
+                      "id":  "add-009",
+                      "message":  "send me the chicken karahi please",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_item_name":  "Chicken Karahi",
+                      "expected_quantity":  1,
+                      "expected_operation":  "add",
+                      "expected_clarification":  false,
+                      "notes":  "Indirect order"
+                  },
+                  {
+                      "id":  "add-010",
+                      "message":  "mujhay kuch chicken wala khana chahiye",
+                      "context":  {
+                                      "catalog_candidates":  [
+                                                                 "Chicken Biryani",
+                                                                 "Chicken Karahi",
+                                                                 "Chicken Pulao"
+                                                             ]
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_clarification":  true,
+                      "notes":  "Broad entity request"
+                  },
+                  {
+                      "id":  "add-011",
+                      "message":  "can you add the second item from those choices",
+                      "context":  {
+                                      "pending_options":  [
+                                                              "Chicken Karahi",
+                                                              "Beef Kofta"
+                                                          ]
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_item_name":  "Beef Kofta",
+                      "expected_quantity":  1,
+                      "expected_operation":  "add",
+                      "expected_clarification":  false,
+                      "notes":  "Pending option reference"
+                  },
+                  {
+                      "id":  "add-012",
+                      "message":  "doosra wala order kar do",
+                      "context":  {
+                                      "pending_options":  [
+                                                              "Chicken Karahi",
+                                                              "Beef Kofta"
+                                                          ]
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_item_name":  "Beef Kofta",
+                      "expected_quantity":  1,
+                      "expected_operation":  "add",
+                      "expected_clarification":  false,
+                      "notes":  "Roman Urdu ordinal selection"
+                  },
+                  {
+                      "id":  "add-013",
+                      "message":  "the one called daal chawal, add it",
+                      "context":  {
+                                      "pending_options":  [
+                                                              "Daal Chawal",
+                                                              "Chicken Biryani"
+                                                          ]
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_item_name":  "Daal Chawal",
+                      "expected_quantity":  1,
+                      "expected_operation":  "add",
+                      "expected_clarification":  false,
+                      "notes":  "Exact pending label"
+                  },
+                  {
+                      "id":  "add-014",
+                      "message":  "I want something vegetarian",
+                      "context":  {
+                                      "catalog_candidates":  [
+                                                                 "Aloo Paratha",
+                                                                 "Daal Chawal"
+                                                             ]
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_clarification":  true,
+                      "notes":  "Category-level ambiguity"
+                  },
+                  {
+                      "id":  "quantity-001",
+                      "message":  "make it three",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Chicken Biryani",
+                                                       "quantity":  1
+                                                   }
+                                               ],
+                                      "recent_active_item":  "Chicken Biryani"
+                                  },
+                      "expected_intent":  "change_quantity",
+                      "expected_item_name":  "Chicken Biryani",
+                      "expected_quantity":  3,
+                      "expected_operation":  "set",
+                      "expected_clarification":  false,
+                      "notes":  "Contextual quantity"
+                  },
+                  {
+                      "id":  "quantity-002",
+                      "message":  "acha 2 krdo",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Aloo Paratha with Raita",
+                                                       "quantity":  1
+                                                   }
+                                               ],
+                                      "recent_active_item":  "Aloo Paratha with Raita"
+                                  },
+                      "expected_intent":  "change_quantity",
+                      "expected_item_name":  "Aloo Paratha with Raita",
+                      "expected_quantity":  2,
+                      "expected_operation":  "set",
+                      "expected_clarification":  false,
+                      "notes":  "Roman Urdu contextual follow-up"
+                  },
+                  {
+                      "id":  "quantity-003",
+                      "message":  "ek aur kar do",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Daal Chawal",
+                                                       "quantity":  1
+                                                   }
+                                               ],
+                                      "recent_active_item":  "Daal Chawal"
+                                  },
+                      "expected_intent":  "increment_quantity",
+                      "expected_item_name":  "Daal Chawal",
+                      "expected_quantity":  2,
+                      "expected_operation":  "increment",
+                      "expected_clarification":  false,
+                      "notes":  "Increment semantics"
+                  },
+                  {
+                      "id":  "quantity-004",
+                      "message":  "two more of that",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Beef Kofta",
+                                                       "quantity":  1
+                                                   }
+                                               ],
+                                      "recent_active_item":  "Beef Kofta"
+                                  },
+                      "expected_intent":  "increment_quantity",
+                      "expected_item_name":  "Beef Kofta",
+                      "expected_quantity":  2,
+                      "expected_operation":  "increment",
+                      "expected_clarification":  false,
+                      "notes":  "Pronoun with one active item"
+                  },
+                  {
+                      "id":  "quantity-005",
+                      "message":  "set the biryani to 5",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Chicken Biryani",
+                                                       "quantity":  2
+                                                   }
+                                               ]
+                                  },
+                      "expected_intent":  "change_quantity",
+                      "expected_item_name":  "Chicken Biryani",
+                      "expected_quantity":  5,
+                      "expected_operation":  "set",
+                      "expected_clarification":  false,
+                      "notes":  "Explicit set"
+                  },
+                  {
+                      "id":  "quantity-006",
+                      "message":  "pulao teen kar do",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Chicken Pulao",
+                                                       "quantity":  1
+                                                   }
+                                               ]
+                                  },
+                      "expected_intent":  "change_quantity",
+                      "expected_item_name":  "Chicken Pulao",
+                      "expected_quantity":  3,
+                      "expected_operation":  "set",
+                      "expected_clarification":  false,
+                      "notes":  "Roman Urdu number"
+                  },
+                  {
+                      "id":  "quantity-007",
+                      "message":  "make that zero",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Chicken Biryani",
+                                                       "quantity":  1
+                                                   }
+                                               ]
+                                  },
+                      "expected_intent":  "change_quantity",
+                      "expected_quantity":  null,
+                      "expected_operation":  "set",
+                      "expected_clarification":  true,
+                      "notes":  "Malformed invalid quantity"
+                  },
+                  {
+                      "id":  "quantity-008",
+                      "message":  "do it 100 times",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Chicken Biryani",
+                                                       "quantity":  1
+                                                   }
+                                               ]
+                                  },
+                      "expected_intent":  "change_quantity",
+                      "expected_quantity":  null,
+                      "expected_operation":  "set",
+                      "expected_clarification":  true,
+                      "notes":  "Out-of-range quantity"
+                  },
+                  {
+                      "id":  "remove-001",
+                      "message":  "remove the biryani",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Chicken Biryani",
+                                                       "quantity":  1
+                                                   }
+                                               ]
+                                  },
+                      "expected_intent":  "remove_item",
+                      "expected_item_name":  "Chicken Biryani",
+                      "expected_quantity":  1,
+                      "expected_operation":  "remove",
+                      "expected_clarification":  false,
+                      "notes":  "Explicit removal"
+                  },
+                  {
+                      "id":  "remove-002",
+                      "message":  "ek hata do",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Chicken Biryani",
+                                                       "quantity":  2
+                                                   }
+                                               ],
+                                      "recent_active_item":  "Chicken Biryani"
+                                  },
+                      "expected_intent":  "decrement_quantity",
+                      "expected_item_name":  "Chicken Biryani",
+                      "expected_quantity":  1,
+                      "expected_operation":  "decrement",
+                      "expected_clarification":  false,
+                      "notes":  "Roman Urdu decrement"
+                  },
+                  {
+                      "id":  "remove-003",
+                      "message":  "take that one out",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Beef Kofta",
+                                                       "quantity":  1
+                                                   }
+                                               ],
+                                      "recent_active_item":  "Beef Kofta"
+                                  },
+                      "expected_intent":  "remove_item",
+                      "expected_item_name":  "Beef Kofta",
+                      "expected_quantity":  1,
+                      "expected_operation":  "remove",
+                      "expected_clarification":  false,
+                      "notes":  "Contextual removal"
+                  },
+                  {
+                      "id":  "remove-004",
+                      "message":  "remove that one",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Chicken Biryani",
+                                                       "quantity":  1
+                                                   },
+                                                   {
+                                                       "name":  "Chicken Karahi",
+                                                       "quantity":  1
+                                                   }
+                                               ]
+                                  },
+                      "expected_intent":  "remove_item",
+                      "expected_clarification":  true,
+                      "notes":  "Multiple possible cart references"
+                  },
+                  {
+                      "id":  "remove-005",
+                      "message":  "biryani nikal do",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Chicken Biryani",
+                                                       "quantity":  1
+                                                   }
+                                               ]
+                                  },
+                      "expected_intent":  "remove_item",
+                      "expected_item_name":  "Chicken Biryani",
+                      "expected_quantity":  1,
+                      "expected_operation":  "remove",
+                      "expected_clarification":  false,
+                      "notes":  "Roman Urdu spelling variation"
+                  },
+                  {
+                      "id":  "cart-001",
+                      "message":  "show my cart",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "view_cart",
+                      "expected_clarification":  false,
+                      "notes":  "Deterministic cart command"
+                  },
+                  {
+                      "id":  "cart-002",
+                      "message":  "cart ka total batao",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Daal Chawal",
+                                                       "quantity":  2
+                                                   }
+                                               ]
+                                  },
+                      "expected_intent":  "cart_total",
+                      "expected_clarification":  false,
+                      "notes":  "Roman Urdu cart total"
+                  },
+                  {
+                      "id":  "cart-003",
+                      "message":  "empty everything in my basket",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Daal Chawal",
+                                                       "quantity":  2
+                                                   }
+                                               ]
+                                  },
+                      "expected_intent":  "clear_cart",
+                      "expected_operation":  "remove",
+                      "expected_clarification":  false,
+                      "notes":  "Clear cart"
+                  },
+                  {
+                      "id":  "cart-004",
+                      "message":  "sab kuch hata dein",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Daal Chawal",
+                                                       "quantity":  2
+                                                   }
+                                               ]
+                                  },
+                      "expected_intent":  "clear_cart",
+                      "expected_operation":  "remove",
+                      "expected_clarification":  false,
+                      "notes":  "Roman Urdu clear cart"
+                  },
+                  {
+                      "id":  "cart-005",
+                      "message":  "what have I selected so far?",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Chicken Biryani",
+                                                       "quantity":  1
+                                                   }
+                                               ]
+                                  },
+                      "expected_intent":  "view_cart",
+                      "expected_clarification":  false,
+                      "notes":  "Indirect view cart"
+                  },
+                  {
+                      "id":  "search-001",
+                      "message":  "show me chicken dishes",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "search_menu",
+                      "expected_clarification":  false,
+                      "notes":  "Search category"
+                  },
+                  {
+                      "id":  "search-002",
+                      "message":  "chicken mein kuch dikhao",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "search_menu",
+                      "expected_clarification":  false,
+                      "notes":  "Informal Roman Urdu search"
+                  },
+                  {
+                      "id":  "search-003",
+                      "message":  "find something without vegetables",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "search_menu",
+                      "expected_clarification":  false,
+                      "notes":  "Exclusion filter"
+                  },
+                  {
+                      "id":  "search-004",
+                      "message":  "sabzi ke baghair meals batao",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "search_menu",
+                      "expected_clarification":  false,
+                      "notes":  "Roman Urdu exclusion"
+                  },
+                  {
+                      "id":  "search-005",
+                      "message":  "which rice meals include chicken?",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "search_menu",
+                      "expected_clarification":  false,
+                      "notes":  "Inclusion constraints"
+                  },
+                  {
+                      "id":  "search-006",
+                      "message":  "anything spicy but not biryani",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "search_menu",
+                      "expected_clarification":  false,
+                      "notes":  "Mixed constraints"
+                  },
+                  {
+                      "id":  "search-007",
+                      "message":  "do you have a light vegetarian option",
+                      "context":  {
+                                      "catalog_candidates":  [
+                                                                 "Aloo Paratha",
+                                                                 "Daal Chawal"
+                                                             ]
+                                  },
+                      "expected_intent":  "search_menu",
+                      "expected_clarification":  false,
+                      "notes":  "Semantic discovery"
+                  },
+                  {
+                      "id":  "search-008",
+                      "message":  "show the third result again",
+                      "context":  {
+                                      "pending_options":  [
+                                                              "Chicken Biryani",
+                                                              "Beef Kofta",
+                                                              "Daal Chawal"
+                                                          ]
+                                  },
+                      "expected_intent":  "search_menu",
+                      "expected_item_name":  "Daal Chawal",
+                      "expected_clarification":  false,
+                      "notes":  "Pending search selection"
+                  },
+                  {
+                      "id":  "context-001",
+                      "message":  "that one",
+                      "context":  {
+                                      "pending_options":  [
+                                                              "Chicken Biryani",
+                                                              "Beef Kofta"
+                                                          ]
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_clarification":  true,
+                      "notes":  "No unique reference"
+                  },
+                  {
+                      "id":  "context-002",
+                      "message":  "yes, confirm it",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Chicken Biryani",
+                                                       "quantity":  1
+                                                   }
+                                               ],
+                                      "pending_action":  "confirm_order"
+                                  },
+                      "expected_intent":  "confirm_order",
+                      "expected_clarification":  false,
+                      "notes":  "Confirmation with state"
+                  },
+                  {
+                      "id":  "context-003",
+                      "message":  "haan wohi wala",
+                      "context":  {
+                                      "pending_options":  [
+                                                              "Daal Chawal"
+                                                          ],
+                                      "pending_action":  "add_item"
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_item_name":  "Daal Chawal",
+                      "expected_clarification":  false,
+                      "notes":  "Unique Roman Urdu reference"
+                  },
+                  {
+                      "id":  "context-004",
+                      "message":  "remove it",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Chicken Biryani",
+                                                       "quantity":  1
+                                                   },
+                                                   {
+                                                       "name":  "Beef Kofta",
+                                                       "quantity":  1
+                                                   }
+                                               ],
+                                      "recent_active_item":  "Beef Kofta"
+                                  },
+                      "expected_intent":  "remove_item",
+                      "expected_item_name":  "Beef Kofta",
+                      "expected_quantity":  1,
+                      "expected_operation":  "remove",
+                      "expected_clarification":  false,
+                      "notes":  "Structured recent item disambiguates"
+                  },
+                  {
+                      "id":  "context-005",
+                      "message":  "same as before but two",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Chicken Karahi",
+                                                       "quantity":  1
+                                                   }
+                                               ],
+                                      "recent_active_item":  "Chicken Karahi"
+                                  },
+                      "expected_intent":  "change_quantity",
+                      "expected_item_name":  "Chicken Karahi",
+                      "expected_quantity":  2,
+                      "expected_operation":  "set",
+                      "expected_clarification":  false,
+                      "notes":  "Contextual quantity"
+                  },
+                  {
+                      "id":  "context-006",
+                      "message":  "number 1 please",
+                      "context":  {
+                                      "pending_options":  [
+                                                              "Aloo Paratha",
+                                                              "Daal Chawal"
+                                                          ],
+                                      "pending_action":  "add_item"
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_item_name":  "Aloo Paratha",
+                      "expected_quantity":  1,
+                      "expected_operation":  "add",
+                      "expected_clarification":  false,
+                      "notes":  "Numbered selection"
+                  },
+                  {
+                      "id":  "context-007",
+                      "message":  "the first one, not the second",
+                      "context":  {
+                                      "pending_options":  [
+                                                              "Chicken Karahi",
+                                                              "Beef Kofta"
+                                                          ]
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_clarification":  true,
+                      "notes":  "Conflicting references"
+                  },
+                  {
+                      "id":  "context-008",
+                      "message":  "use the item I asked for earlier",
+                      "context":  {
+                                      "recent_active_item":  null,
+                                      "recent_turns":  [
+                                                           {
+                                                               "role":  "user",
+                                                               "content":  "I want something chicken"
+                                                           }
+                                                       ]
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_clarification":  true,
+                      "notes":  "Missing resolvable state"
+                  },
+                  {
+                      "id":  "order-001",
+                      "message":  "place my order now",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Chicken Biryani",
+                                                       "quantity":  1
+                                                   }
+                                               ]
+                                  },
+                      "expected_intent":  "confirm_order",
+                      "expected_clarification":  false,
+                      "notes":  "Order confirmation"
+                  },
+                  {
+                      "id":  "order-002",
+                      "message":  "haan order confirm kar do",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Daal Chawal",
+                                                       "quantity":  1
+                                                   }
+                                               ]
+                                  },
+                      "expected_intent":  "confirm_order",
+                      "expected_clarification":  false,
+                      "notes":  "Roman Urdu confirmation"
+                  },
+                  {
+                      "id":  "order-003",
+                      "message":  "where is order TF-1024?",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "track_order",
+                      "expected_clarification":  false,
+                      "notes":  "Tracking reference"
+                  },
+                  {
+                      "id":  "order-004",
+                      "message":  "mera order kahan pohancha",
+                      "context":  {
+                                      "active_order":  {
+                                                           "order_number":  "TF-1024",
+                                                           "status":  "preparing"
+                                                       }
+                                  },
+                      "expected_intent":  "track_order",
+                      "expected_clarification":  false,
+                      "notes":  "Roman Urdu tracking"
+                  },
+                  {
+                      "id":  "order-005",
+                      "message":  "cancel the order I just placed",
+                      "context":  {
+                                      "active_order":  {
+                                                           "order_number":  "TF-1024",
+                                                           "status":  "pending"
+                                                       }
+                                  },
+                      "expected_intent":  "cancel_order",
+                      "expected_clarification":  false,
+                      "notes":  "Order cancellation"
+                  },
+                  {
+                      "id":  "order-006",
+                      "message":  "I need to change my order",
+                      "context":  {
+                                      "active_order":  {
+                                                           "order_number":  "TF-1024",
+                                                           "status":  "pending"
+                                                       }
+                                  },
+                      "expected_intent":  "modify_order",
+                      "expected_clarification":  false,
+                      "notes":  "Order modification"
+                  },
+                  {
+                      "id":  "order-007",
+                      "message":  "confirm",
+                      "context":  {
+                                      "cart":  [
+
+                                               ]
+                                  },
+                      "expected_intent":  "confirm_order",
+                      "expected_clarification":  true,
+                      "notes":  "Confirmation without cart"
+                  },
+                  {
+                      "id":  "order-008",
+                      "message":  "track my order",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "track_order",
+                      "expected_clarification":  true,
+                      "notes":  "Missing order reference"
+                  },
+                  {
+                      "id":  "faq-001",
+                      "message":  "what areas do you deliver to?",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "delivery_area",
+                      "expected_clarification":  false,
+                      "notes":  "Delivery policy"
+                  },
+                  {
+                      "id":  "faq-002",
+                      "message":  "delivery kitni dair leti hai",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "delivery_timing",
+                      "expected_clarification":  false,
+                      "notes":  "Roman Urdu policy question"
+                  },
+                  {
+                      "id":  "faq-003",
+                      "message":  "which payment methods are accepted?",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "payment_methods",
+                      "expected_clarification":  false,
+                      "notes":  "Payment FAQ"
+                  },
+                  {
+                      "id":  "faq-004",
+                      "message":  "what is your refund policy",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "faq",
+                      "expected_clarification":  false,
+                      "notes":  "General policy"
+                  },
+                  {
+                      "id":  "faq-005",
+                      "message":  "can I pause my weekly subscription",
+                      "context":  {
+                                      "subscription":  {
+                                                           "status":  "active"
+                                                       }
+                                  },
+                      "expected_intent":  "pause_subscription",
+                      "expected_clarification":  false,
+                      "notes":  "Subscription policy/action"
+                  },
+                  {
+                      "id":  "faq-006",
+                      "message":  "meri subscription band kar do",
+                      "context":  {
+                                      "subscription":  {
+                                                           "status":  "active"
+                                                       }
+                                  },
+                      "expected_intent":  "cancel_subscription",
+                      "expected_clarification":  false,
+                      "notes":  "Roman Urdu subscription cancellation"
+                  },
+                  {
+                      "id":  "faq-007",
+                      "message":  "what subscription plans do you have",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "subscription_plans",
+                      "expected_clarification":  false,
+                      "notes":  "Subscription discovery"
+                  },
+                  {
+                      "id":  "faq-008",
+                      "message":  "skip tomorrow\u0027s meal",
+                      "context":  {
+                                      "subscription":  {
+                                                           "status":  "active"
+                                                       }
+                                  },
+                      "expected_intent":  "skip_meal",
+                      "expected_clarification":  false,
+                      "notes":  "Subscription operation"
+                  },
+                  {
+                      "id":  "faq-009",
+                      "message":  "resume my paused tiffin plan",
+                      "context":  {
+                                      "subscription":  {
+                                                           "status":  "paused"
+                                                       }
+                                  },
+                      "expected_intent":  "resume_subscription",
+                      "expected_clarification":  false,
+                      "notes":  "Subscription state"
+                  },
+                  {
+                      "id":  "faq-010",
+                      "message":  "how do I start a weekly plan",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "create_subscription",
+                      "expected_clarification":  false,
+                      "notes":  "Subscription creation"
+                  },
+                  {
+                      "id":  "handoff-001",
+                      "message":  "I need to speak to a person",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "human_handoff",
+                      "expected_clarification":  false,
+                      "notes":  "Explicit escalation"
+                  },
+                  {
+                      "id":  "handoff-002",
+                      "message":  "agent se baat karni hai",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "human_handoff",
+                      "expected_clarification":  false,
+                      "notes":  "Roman Urdu escalation"
+                  },
+                  {
+                      "id":  "handoff-003",
+                      "message":  "this is urgent, please connect support",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "human_handoff",
+                      "expected_clarification":  false,
+                      "notes":  "Urgent escalation"
+                  },
+                  {
+                      "id":  "address-001",
+                      "message":  "deliver it to 14 Lake Road, Lahore",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "provide_address",
+                      "expected_clarification":  false,
+                      "notes":  "Address capture"
+                  },
+                  {
+                      "id":  "address-002",
+                      "message":  "mera address 22B Gulberg Lahore hai",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "provide_address",
+                      "expected_clarification":  false,
+                      "notes":  "Roman Urdu address"
+                  },
+                  {
+                      "id":  "mixed-001",
+                      "message":  "aaj menu mein chicken ho to ek bhej dena",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_item_name":  "Chicken",
+                      "expected_quantity":  1,
+                      "expected_operation":  "add",
+                      "expected_clarification":  true,
+                      "notes":  "Mixed intent and unresolved entity"
+                  },
+                  {
+                      "id":  "mixed-002",
+                      "message":  "show my cart and add one more biryani",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Chicken Biryani",
+                                                       "quantity":  1
+                                                   }
+                                               ]
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_item_name":  "Chicken Biryani",
+                      "expected_quantity":  2,
+                      "expected_operation":  "add",
+                      "expected_clarification":  true,
+                      "notes":  "Multiple intents require clarification or decomposition"
+                  },
+                  {
+                      "id":  "mixed-003",
+                      "message":  "I want dinner, maybe the second chicken thing",
+                      "context":  {
+                                      "pending_options":  [
+                                                              "Chicken Karahi",
+                                                              "Chicken Biryani"
+                                                          ]
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_clarification":  true,
+                      "notes":  "Mixed temporal and ambiguous reference"
+                  },
+                  {
+                      "id":  "edge-001",
+                      "message":  "add 0 biryani",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_quantity":  null,
+                      "expected_operation":  "add",
+                      "expected_clarification":  true,
+                      "notes":  "Invalid quantity"
+                  },
+                  {
+                      "id":  "edge-002",
+                      "message":  "one of those please",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_clarification":  true,
+                      "notes":  "Missing pending options"
+                  },
+                  {
+                      "id":  "edge-003",
+                      "message":  "hmm maybe something",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "unknown",
+                      "expected_clarification":  true,
+                      "notes":  "Underspecified message"
+                  },
+                  {
+                      "id":  "edge-004",
+                      "message":  "asdf qwer",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "unknown",
+                      "expected_clarification":  true,
+                      "notes":  "Malformed input"
+                  },
+                  {
+                      "id":  "edge-005",
+                      "message":  "I changed my mind",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Chicken Biryani",
+                                                       "quantity":  1
+                                                   }
+                                               ]
+                                  },
+                      "expected_intent":  "modify_order",
+                      "expected_clarification":  true,
+                      "notes":  "Ambiguous contextual statement"
+                  },
+                  {
+                      "id":  "edge-006",
+                      "message":  "haan",
+                      "context":  {
+                                      "pending_action":  "confirm_order",
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Chicken Biryani",
+                                                       "quantity":  1
+                                                   }
+                                               ]
+                                  },
+                      "expected_intent":  "confirm_order",
+                      "expected_clarification":  false,
+                      "notes":  "Short affirmative follow-up"
+                  },
+                  {
+                      "id":  "edge-007",
+                      "message":  "no, remove the last thing",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Daal Chawal",
+                                                       "quantity":  1
+                                                   },
+                                                   {
+                                                       "name":  "Beef Kofta",
+                                                       "quantity":  1
+                                                   }
+                                               ]
+                                  },
+                      "expected_intent":  "remove_item",
+                      "expected_item_name":  "Beef Kofta",
+                      "expected_quantity":  1,
+                      "expected_operation":  "remove",
+                      "expected_clarification":  false,
+                      "notes":  "Last-item reference"
+                  },
+                  {
+                      "id":  "edge-008",
+                      "message":  "kal wala repeat kar do",
+                      "context":  {
+                                      "recent_active_item":  "Chicken Karahi"
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_item_name":  "Chicken Karahi",
+                      "expected_quantity":  1,
+                      "expected_operation":  "add",
+                      "expected_clarification":  false,
+                      "notes":  "Informal contextual repeat"
+                  },
+                  {
+                      "id":  "edge-009",
+                      "message":  "make it six",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Chicken Biryani",
+                                                       "quantity":  1
+                                                   }
+                                               ]
+                                  },
+                      "expected_intent":  "change_quantity",
+                      "expected_item_name":  "Chicken Biryani",
+                      "expected_quantity":  6,
+                      "expected_operation":  "set",
+                      "expected_clarification":  false,
+                      "notes":  "Number word with contextual item"
+                  },
+                  {
+                      "id":  "edge-010",
+                      "message":  "thora sa aur kar do",
+                      "context":  {
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Daal Chawal",
+                                                       "quantity":  1
+                                                   }
+                                               ]
+                                  },
+                      "expected_intent":  "change_quantity",
+                      "expected_item_name":  "Daal Chawal",
+                      "expected_quantity":  null,
+                      "expected_operation":  "set",
+                      "expected_clarification":  true,
+                      "notes":  "Malformed non-numeric quantity"
+                  },
+                  {
+                      "id":  "edge-011",
+                      "message":  "teen ya chaar packets",
+                      "context":  {
+                                      "pending_options":  [
+                                                              "Chicken Biryani"
+                                                          ]
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_item_name":  "Chicken Biryani",
+                      "expected_quantity":  null,
+                      "expected_operation":  "add",
+                      "expected_clarification":  true,
+                      "notes":  "Ambiguous quantity range"
+                  },
+                  {
+                      "id":  "pending-009",
+                      "message":  "option 2 bhej do",
+                      "context":  {
+                                      "pending_options":  [
+                                                              "Aloo Paratha",
+                                                              "Beef Kofta",
+                                                              "Daal Chawal"
+                                                          ],
+                                      "pending_action":  "add_item"
+                                  },
+                      "expected_intent":  "add_item",
+                      "expected_item_name":  "Beef Kofta",
+                      "expected_quantity":  1,
+                      "expected_operation":  "add",
+                      "expected_clarification":  false,
+                      "notes":  "Pending option selection"
+                  },
+                  {
+                      "id":  "pending-010",
+                      "message":  "haan, wohi",
+                      "context":  {
+                                      "pending_action":  "remove_item",
+                                      "cart":  [
+                                                   {
+                                                       "name":  "Chicken Karahi",
+                                                       "quantity":  2
+                                                   }
+                                               ],
+                                      "pending_options":  [
+                                                              "Chicken Karahi"
+                                                          ]
+                                  },
+                      "expected_intent":  "remove_item",
+                      "expected_item_name":  "Chicken Karahi",
+                      "expected_quantity":  2,
+                      "expected_operation":  "remove",
+                      "expected_clarification":  false,
+                      "notes":  "Pending removal selection"
+                  },
+                  {
+                      "id":  "state-009",
+                      "message":  "subscription ka status?",
+                      "context":  {
+                                      "subscription":  {
+                                                           "status":  "paused",
+                                                           "plan":  "weekly"
+                                                       }
+                                  },
+                      "expected_intent":  "subscription_status",
+                      "expected_clarification":  false,
+                      "notes":  "Subscription state lookup"
+                  },
+                  {
+                      "id":  "delivery-003",
+                      "message":  "kya DHA phase 5 mein delivery hai",
+                      "context":  {
+
+                                  },
+                      "expected_intent":  "delivery_area",
+                      "expected_clarification":  false,
+                      "notes":  "Specific Roman Urdu delivery area"
+                  },
+                  {
+                      "id":  "menu-007",
+                      "message":  "mujhe jaldi banne wali cheezain dikhain",
+                      "context":  {
+                                      "catalog_candidates":  [
+                                                                 "Aloo Paratha",
+                                                                 "Daal Chawal"
+                                                             ]
+                                  },
+                      "expected_intent":  "search_menu",
+                      "expected_clarification":  false,
+                      "notes":  "Semantic menu filter"
+                  }
+              ]
+}
