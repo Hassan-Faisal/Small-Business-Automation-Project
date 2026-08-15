@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+from app.core.config import settings
 from app.rag.domain_boundary import decide_rag_usage, is_dynamic_business_question
 from app.services.knowledge_manager import KnowledgeManager, KnowledgeManagerUnavailableError
 from app.services.openai_service import OpenAIService
@@ -17,7 +18,7 @@ class RAGChain:
     def __init__(self, knowledge_manager: KnowledgeManager | None = None, llm: OpenAIService | None = None):
         self.knowledge_manager = knowledge_manager
         self.retriever = None
-        self.llm = llm or OpenAIService()
+        self.llm = llm or OpenAIService(model=settings.OPENAI_RAG_MODEL or settings.OPENAI_MODEL)
         self.last_call_metadata: dict[str, int | bool] = {"rag_invoked": False, "rag_generation_count": 0, "embedding_invoked": False}
 
     def build_prompt(self, question: str, context: str) -> str:
@@ -87,6 +88,7 @@ Answer:
 
         prompt = self.build_prompt(question=question, context=context)
         try:
+            logger.info("rag_generation_begin", extra={"event": "rag_generation_begin", "model": getattr(self.llm, "model", settings.OPENAI_RAG_MODEL or settings.OPENAI_MODEL)})
             response = await self.llm.generate_response(prompt)
             self.last_call_metadata["rag_generation_count"] = 1
         except Exception:

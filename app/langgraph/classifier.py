@@ -89,7 +89,7 @@ class StructuredIntentClassifier:
     confidence_threshold = 0.78
 
     def __init__(self, llm: OpenAIService | None = None) -> None:
-        self.llm = llm or OpenAIService()
+        self.llm = llm or OpenAIService(model=settings.OPENAI_CLASSIFIER_MODEL or settings.OPENAI_MODEL)
 
     @staticmethod
     def build_prompt(context: SemanticContext | str) -> str:
@@ -133,7 +133,7 @@ Bounded context:
             "catalog_item_count": len(semantic_context.catalog_items),
             "active_order_present": bool(semantic_context.active_order),
         }
-        logger.info("classifier_started", extra={"event": "classifier_started", "message_id": message_id or "unknown", "model": settings.OPENAI_MODEL, **context_counts})
+        logger.info("classifier_started", extra={"event": "classifier_started", "message_id": message_id or "unknown", "model": getattr(self.llm, "model", settings.OPENAI_CLASSIFIER_MODEL or settings.OPENAI_MODEL), **context_counts})
         logger.info("classifier_invocation_begin", extra={"event": "classifier_invocation_begin"})
         try:
             if not settings.OPENAI_API_KEY.strip() and isinstance(self.llm, OpenAIService):

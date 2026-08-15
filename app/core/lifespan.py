@@ -45,7 +45,10 @@ async def lifespan(app: FastAPI):
             "event": "application_runtime_identity",
             "app_version": settings.APP_VERSION,
             "git_sha": git_sha,
-            "openai_model": settings.OPENAI_MODEL,
+            "openai_default_model": settings.OPENAI_MODEL,
+            "openai_classifier_model": settings.OPENAI_CLASSIFIER_MODEL or settings.OPENAI_MODEL,
+            "openai_rag_model": settings.OPENAI_RAG_MODEL or settings.OPENAI_MODEL,
+            "openai_embedding_model": settings.OPENAI_EMBEDDING_MODEL,
             "openai_api_key_configured": bool(settings.OPENAI_API_KEY.strip()),
         },
     )

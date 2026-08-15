@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     APP_DESCRIPTION: str = "WhatsApp-first AI ordering assistant"
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4.1-mini"
+    OPENAI_CLASSIFIER_MODEL: str = ""
+    OPENAI_RAG_MODEL: str = ""
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     DATABASE_URL: str
     WHATSAPP_VERIFY_TOKEN: str = ""
